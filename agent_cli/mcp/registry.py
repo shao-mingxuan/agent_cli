@@ -12,12 +12,31 @@ class MCPRegistry:
         self._tool_infos: list[ToolInfo] = []
 
     def add_server(self, config: MCPServerConfig) -> int:
-        """连接 server 并注册其所有工具，返回工具数量。"""
+        """连接 server 并注册其所有工具，返回工具数量。
+
+        连接失败或工具列表获取失败时返回 0，不中断后续 server 加载。
+        """
         client = MCPClient(config)
-        client.connect()
+        try:
+            client.connect()
+        except Exception as e:
+            from rich.console import Console
+            Console().print(
+                f"[dim][MCP] 连接 '{config.name}' 失败 ({config.transport}): {e}[/dim]"
+            )
+            return 0
+
         self._clients.append(client)
 
-        mcp_tools = client.list_tools_sync()
+        try:
+            mcp_tools = client.list_tools_sync()
+        except Exception as e:
+            from rich.console import Console
+            Console().print(
+                f"[dim][MCP] '{config.name}' 工具列表获取失败: {e}[/dim]"
+            )
+            return 0
+
         count = 0
         for mcp_tool in mcp_tools:
             adapter = MCPToolAdapter(

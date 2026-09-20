@@ -1,4 +1,5 @@
 """L0 CLI - chat / run 子命令实现。"""
+import json
 import sys
 import threading
 
@@ -18,7 +19,7 @@ from ..agent.types import StepType
 from ..memory.working import WorkingMemory
 from ..providers.openai_compat import OpenAICompatProvider
 from ..prompts.builtin.default import DEFAULT_SYSTEM_PROMPT
-from ..mcp import MCPRegistry, parse_mcp_server_spec
+from ..mcp import MCPRegistry, parse_mcp_server_spec, load_mcp_servers_from_config
 from ..tools.loader import load_plugins
 
 
@@ -235,19 +236,37 @@ def _handle_events(agent: Orchestrator, user_input: str):
 def create_orchestrator(
     system_prompt: str | None = None,
     mcp_servers: tuple[str, ...] = (),
+    mcp_config: str | None = None,
     plugins_dir: str = "./plugins",
 ) -> Orchestrator:
     """创建 Orchestrator 实例，加载内置 + MCP + 插件工具。"""
     provider = OpenAICompatProvider()
     memory = WorkingMemory()
 
+    # 收集所有 MCP server 配置
+    all_configs: list = []
+    for spec in mcp_servers:
+        try:
+            all_configs.append(parse_mcp_server_spec(spec))
+        except ValueError as e:
+            console.print(f"[bold red]MCP server spec 解析失败: {e}[/bold red]")
+
+    if mcp_config:
+        try:
+            all_configs.extend(load_mcp_servers_from_config(mcp_config))
+            console.print(f"[dim]已加载 MCP 配置文件: {mcp_config}[/dim]")
+        except (FileNotFoundError, ValueError, json.JSONDecodeError) as e:
+            console.print(f"[bold red]MCP 配置文件加载失败 ({mcp_config}): {e}[/bold red]")
+
     mcp_registry = None
-    if mcp_servers:
+    if all_configs:
         mcp_registry = MCPRegistry()
-        for spec in mcp_servers:
-            config = parse_mcp_server_spec(spec)
+        for config in all_configs:
             count = mcp_registry.add_server(config)
-            console.print(f"[dim]MCP server '{config.name}' 已连接，加载 {count} 个工具[/dim]")
+            if count > 0:
+                console.print(
+                    f"[dim]MCP server '{config.name}' 已连接，加载 {count} 个工具[/dim]"
+                )
 
     plugin_infos = load_plugins(plugins_dir)
     if plugin_infos:
@@ -323,12 +342,16 @@ def run_repl(agent: Orchestrator) -> None:
     help="MCP server，格式：stdio:name:command:arg1,arg2 或 sse:name:url"
 )
 @click.option(
+    "--mcp-config", default=None,
+    help="MCP 配置文件路径（JSON 格式）"
+)
+@click.option(
     "--plugins-dir", default="./plugins", help="插件目录路径"
 )
-def chat(system_prompt, mcp_servers, plugins_dir):
+def chat(system_prompt, mcp_servers, mcp_config, plugins_dir):
     """启动交互式对话。"""
     load_dotenv()
-    agent = create_orchestrator(system_prompt, mcp_servers, plugins_dir)
+    agent = create_orchestrator(system_prompt, mcp_servers, mcp_config, plugins_dir)
     try:
         run_repl(agent)
     finally:
@@ -345,12 +368,16 @@ def chat(system_prompt, mcp_servers, plugins_dir):
     help="MCP server，格式：stdio:name:command:arg1,arg2 或 sse:name:url"
 )
 @click.option(
+    "--mcp-config", default=None,
+    help="MCP 配置文件路径（JSON 格式）"
+)
+@click.option(
     "--plugins-dir", default="./plugins", help="插件目录路径"
 )
-def run(prompt, system_prompt, mcp_servers, plugins_dir):
+def run(prompt, system_prompt, mcp_servers, mcp_config, plugins_dir):
     """单次执行一个问题。"""
     load_dotenv()
-    agent = create_orchestrator(system_prompt, mcp_servers, plugins_dir)
+    agent = create_orchestrator(system_prompt, mcp_servers, mcp_config, plugins_dir)
     try:
         _handle_events(agent, prompt)
     finally:

@@ -128,23 +128,88 @@ def parse_mcp_server_spec(spec: str) -> MCPServerConfig:
       stdio:name:command:arg1,arg2,arg3
       sse:name:url
     """
-    parts = spec.split(":", 3)
+    # 按冒号最多分 3 段，保留 URL/命令中的冒号
+    parts = spec.split(":", 2)
+    if len(parts) < 3:
+        raise ValueError(
+            f"MCP server spec 格式错误: {spec}。"
+            f"stdio 应为 stdio:name:command:arg1,arg2；"
+            f"sse 应为 sse:name:url"
+        )
     transport = parts[0]
+    name = parts[1]
+    remaining = parts[2]
 
     if transport == "stdio":
-        if len(parts) < 3:
-            raise ValueError(f"stdio 格式错误: {spec}，应为 stdio:name:command:arg1,arg2")
-        name = parts[1]
-        command = parts[2]
-        args = parts[3].split(",") if len(parts) > 3 and parts[3] else []
+        cmd_parts = remaining.split(":", 1)
+        command = cmd_parts[0]
+        args = cmd_parts[1].split(",") if len(cmd_parts) > 1 and cmd_parts[1] else []
         return MCPServerConfig(name=name, transport="stdio", command=command, args=args)
 
     elif transport == "sse":
-        if len(parts) < 3:
-            raise ValueError(f"sse 格式错误: {spec}，应为 sse:name:url")
-        name = parts[1]
-        url = parts[2]
-        return MCPServerConfig(name=name, transport="sse", url=url)
+        return MCPServerConfig(name=name, transport="sse", url=remaining)
 
     else:
         raise ValueError(f"不支持的传输方式: {transport}，支持 stdio 或 sse")
+
+
+def load_mcp_servers_from_config(path: str) -> list[MCPServerConfig]:
+    """从 JSON 配置文件加载 MCP server 配置列表。
+
+    配置格式示例：
+        {
+          "mcpServers": {
+            "weather": {
+              "command": "venv/bin/python",
+              "args": ["mcp_servers/weather_server.py"],
+              "transport": "stdio"
+            },
+            "fs": {
+              "command": "npx",
+              "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+              "transport": "stdio"
+            },
+            "remote": {
+              "url": "https://example.com/sse",
+              "transport": "sse"
+            }
+          }
+        }
+    """
+    import json
+    import os
+
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    servers = data.get("mcpServers", {})
+    if not isinstance(servers, dict):
+        raise ValueError(f"配置文件格式错误: {path} 中 mcpServers 应为对象")
+
+    configs: list[MCPServerConfig] = []
+    for name, cfg in servers.items():
+        if not isinstance(cfg, dict):
+            raise ValueError(f"MCP server '{name}' 配置应为对象")
+        transport = cfg.get("transport", "stdio")
+        env = cfg.get("env")
+        if transport == "stdio":
+            cmd = cfg.get("command")
+            if not cmd:
+                raise ValueError(f"MCP server '{name}' stdio 模式下缺少 command")
+            args = cfg.get("args", [])
+            configs.append(
+                MCPServerConfig(
+                    name=name, transport="stdio", command=cmd, args=args, env=env
+                )
+            )
+        elif transport == "sse":
+            url = cfg.get("url")
+            if not url:
+                raise ValueError(f"MCP server '{name}' sse 模式下缺少 url")
+            configs.append(
+                MCPServerConfig(name=name, transport="sse", url=url, env=env)
+            )
+        else:
+            raise ValueError(f"MCP server '{name}' 不支持的传输方式: {transport}")
+
+    return configs

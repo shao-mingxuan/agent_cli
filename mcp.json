@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "weather": {
+      "command": "venv/bin/python",
+      "args": ["mcp_servers/weather_server.py"],
+      "transport": "stdio"
+    },
+    "fs": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+      "transport": "stdio"
+    },
+    "db": {
+      "command": "venv/bin/python",
+      "args": ["mcp_servers/db_server.py"],
+      "transport": "stdio"
+    }
+  }
+}
