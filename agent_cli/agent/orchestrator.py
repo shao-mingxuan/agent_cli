@@ -7,9 +7,10 @@ from langchain_core.messages import BaseMessage, HumanMessage
 from ..memory.working import WorkingMemory
 from ..providers.base import BaseProvider
 from ..prompts.builtin.default import DEFAULT_SYSTEM_PROMPT
-from ..tools.registry import ToolRegistry, create_default_registry
+from ..tools.registry import ToolRegistry, create_default_registry, ToolInfo
 from ..middleware.pipeline import MiddlewarePipeline, create_default_pipeline
 from ..middleware.types import GuardResult
+from ..mcp.registry import MCPRegistry
 from .types import AgentState, AgentEvent, StepType
 
 
@@ -23,22 +24,27 @@ class Orchestrator:
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         memory: WorkingMemory | None = None,
         middleware: MiddlewarePipeline | None = None,
+        mcp_registry: MCPRegistry | None = None,
+        extra_tool_infos: list[ToolInfo] | None = None,
     ):
         self.provider = provider
         self.model = provider.get_model()
         self.memory = memory or WorkingMemory()
         self.system_prompt = system_prompt
         self.middleware = middleware or create_default_pipeline()
+        self._mcp_registry = mcp_registry
 
-        if tools is None:
-            self.registry = create_default_registry()
-            tools = self.registry.get_all()
-        else:
-            self.registry = ToolRegistry()
-            for t in tools:
-                self.registry.register(t, source="unknown")
+        self.registry = create_default_registry()
 
-        self.tools = tools
+        if extra_tool_infos:
+            for info in extra_tool_infos:
+                self.registry.register(info.tool, source=info.source, category=info.category)
+
+        if mcp_registry:
+            for info in mcp_registry.get_tool_infos():
+                self.registry.register(info.tool, source=info.source, category=info.category)
+
+        self.tools = self.registry.get_all()
         self._tool_lookup = {
             info.name: info for info in self.registry.get_all_info()
         }
@@ -215,3 +221,8 @@ class Orchestrator:
     def reset(self) -> None:
         """清空对话记忆。"""
         self.memory.clear()
+
+    def cleanup(self) -> None:
+        """关闭外部连接（MCP server 等）。"""
+        if self._mcp_registry:
+            self._mcp_registry.disconnect_all()

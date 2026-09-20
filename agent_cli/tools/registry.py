@@ -54,13 +54,15 @@ class ToolRegistry:
 
 
 def create_default_registry() -> ToolRegistry:
-    """创建带有默认内置工具的注册中心。"""
-    from .builtin.weather import get_weather
+    """创建带有默认内置工具的注册中心。
+
+    天气查询已迁移至 MCP server（mcp_servers/weather_server.py），
+    通过 --mcp-server 接入实时天气数据。
+    """
     from .builtin.calculate import calculate
     from .builtin.safety import detect_pii, detect_violation, scan_file, validate_input
 
     registry = ToolRegistry()
-    registry.register(get_weather, source="builtin", category="weather")
     registry.register(calculate, source="builtin", category="calculate")
     registry.register(detect_pii, source="builtin", category="safety")
     registry.register(detect_violation, source="builtin", category="safety")

@@ -18,6 +18,8 @@ from ..agent.types import StepType
 from ..memory.working import WorkingMemory
 from ..providers.openai_compat import OpenAICompatProvider
 from ..prompts.builtin.default import DEFAULT_SYSTEM_PROMPT
+from ..mcp import MCPRegistry, parse_mcp_server_spec
+from ..tools.loader import load_plugins
 
 
 console = Console()
@@ -230,14 +232,34 @@ def _handle_events(agent: Orchestrator, user_input: str):
                 console.print()
 
 
-def create_orchestrator(system_prompt: str | None = None) -> Orchestrator:
-    """创建 Orchestrator 实例。"""
+def create_orchestrator(
+    system_prompt: str | None = None,
+    mcp_servers: tuple[str, ...] = (),
+    plugins_dir: str = "./plugins",
+) -> Orchestrator:
+    """创建 Orchestrator 实例，加载内置 + MCP + 插件工具。"""
     provider = OpenAICompatProvider()
     memory = WorkingMemory()
+
+    mcp_registry = None
+    if mcp_servers:
+        mcp_registry = MCPRegistry()
+        for spec in mcp_servers:
+            config = parse_mcp_server_spec(spec)
+            count = mcp_registry.add_server(config)
+            console.print(f"[dim]MCP server '{config.name}' 已连接，加载 {count} 个工具[/dim]")
+
+    plugin_infos = load_plugins(plugins_dir)
+    if plugin_infos:
+        for info in plugin_infos:
+            console.print(f"[dim]插件 '{info.name}' 已加载 ({info.source}/{info.category})[/dim]")
+
     return Orchestrator(
         provider=provider,
         memory=memory,
         system_prompt=system_prompt or DEFAULT_SYSTEM_PROMPT,
+        mcp_registry=mcp_registry,
+        extra_tool_infos=plugin_infos,
     )
 
 
@@ -260,7 +282,28 @@ def run_repl(agent: Orchestrator) -> None:
             console.print("再见！")
             break
         elif cmd == "/help":
-            console.print("[dim]  /exit, /quit  - 退出对话\n  /clear        - 清空对话历史\n  /help         - 显示帮助[/dim]")
+            console.print("[dim]  /exit, /quit  - 退出对话\n  /clear        - 清空对话历史\n  /tools        - 列出所有已注册工具\n  /help         - 显示帮助[/dim]")
+            continue
+        elif cmd == "/tools":
+            for name, info in sorted(agent._tool_lookup.items()):
+                tag = _make_tag(info.source, info.category, info.name)
+                desc = (info.tool.description or "").split("\n")[0][:70]
+                console.print(
+                    Text.assemble(
+                        ("  ", ""),
+                        (f"{name:35s}", "bold"),
+                        (f"  {tag}", "dim"),
+                    )
+                )
+                if desc:
+                    console.print(
+                        Text.assemble(
+                            ("          ", ""),
+                            (desc, "dim"),
+                        )
+                    )
+            console.print(f"\n[dim]共 {len(agent._tool_lookup)} 个工具[/dim]")
+            console.print(Rule(style="dim"))
             continue
         elif cmd == "/clear":
             agent.reset()
@@ -275,11 +318,21 @@ def run_repl(agent: Orchestrator) -> None:
 @click.option(
     "--system-prompt", "-s", default=None, help="自定义系统提示词"
 )
-def chat(system_prompt):
+@click.option(
+    "--mcp-server", "mcp_servers", multiple=True,
+    help="MCP server，格式：stdio:name:command:arg1,arg2 或 sse:name:url"
+)
+@click.option(
+    "--plugins-dir", default="./plugins", help="插件目录路径"
+)
+def chat(system_prompt, mcp_servers, plugins_dir):
     """启动交互式对话。"""
     load_dotenv()
-    agent = create_orchestrator(system_prompt)
-    run_repl(agent)
+    agent = create_orchestrator(system_prompt, mcp_servers, plugins_dir)
+    try:
+        run_repl(agent)
+    finally:
+        agent.cleanup()
 
 
 @click.command()
@@ -287,8 +340,18 @@ def chat(system_prompt):
 @click.option(
     "--system-prompt", "-s", default=None, help="自定义系统提示词"
 )
-def run(prompt, system_prompt):
+@click.option(
+    "--mcp-server", "mcp_servers", multiple=True,
+    help="MCP server，格式：stdio:name:command:arg1,arg2 或 sse:name:url"
+)
+@click.option(
+    "--plugins-dir", default="./plugins", help="插件目录路径"
+)
+def run(prompt, system_prompt, mcp_servers, plugins_dir):
     """单次执行一个问题。"""
     load_dotenv()
-    agent = create_orchestrator(system_prompt)
-    _handle_events(agent, prompt)
+    agent = create_orchestrator(system_prompt, mcp_servers, plugins_dir)
+    try:
+        _handle_events(agent, prompt)
+    finally:
+        agent.cleanup()
