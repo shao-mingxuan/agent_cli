@@ -1,5 +1,7 @@
 """L0 CLI - chat / run 子命令实现。"""
 import json
+import math
+import shutil
 import sys
 import threading
 
@@ -30,6 +32,15 @@ def _make_tag(source: str, category: str, name: str) -> str:
     if category:
         return f"{source}/{category}/{name}"
     return f"{source}/{name}"
+
+
+def _tail_text(text: str, max_lines: int) -> Text:
+    """取 text 尾部 max_lines 行，确保 Live 区域不超出终端高度。"""
+    lines = text.split("\n")
+    if len(lines) <= max_lines:
+        return Text(text)
+    tail = "\n".join(lines[-max_lines:])
+    return Text("…\n" + tail, style="dim")
 
 
 class TypewriterDisplay:
@@ -73,16 +84,18 @@ class TypewriterDisplay:
         with self._lock:
             self._buffer += token
         if self._is_tty:
+            _, height = shutil.get_terminal_size((80, 24))
+            max_lines = max(3, height - 2)
             if self._live is None:
                 self._live = Live(
-                    Text(self._buffer),
+                    _tail_text(self._buffer, max_lines),
                     console=self._console,
                     refresh_per_second=30,
                     transient=True,
                 )
                 self._live.start()
             else:
-                self._live.update(Text(self._buffer))
+                self._live.update(_tail_text(self._buffer, max_lines))
         else:
             sys.stdout.write(token)
             sys.stdout.flush()
