@@ -1,14 +1,13 @@
 """L0 CLI - chat / run 子命令实现。"""
 import json
-import math
-import shutil
 import sys
 import threading
 
 import click
 from dotenv import load_dotenv
 
-from rich.console import Console
+from rich.console import Console, Group
+from rich.live import Live
 from rich.markdown import Markdown
 from rich.rule import Rule
 from rich.spinner import Spinner
@@ -33,41 +32,12 @@ def _make_tag(source: str, category: str, name: str) -> str:
     return f"{source}/{name}"
 
 
-def _term_size() -> tuple[int, int]:
-    """获取终端宽度和高度。"""
-    size = shutil.get_terminal_size((80, 24))
-    return size.columns, size.lines
-
-
-def _rendered_lines(text: str, width: int) -> int:
-    """估算纯文本在终端宽度下 soft-wrap 后占用的行数（精确计算 CJK 宽字符）。"""
-    if not text:
-        return 0
-    text = text.rstrip("\n")
-    total = 0
-    for line in text.split("\n"):
-        cell = Text(line, no_wrap=True).cell_len
-        total += max(1, math.ceil(cell / width)) if cell else 1
-    return total
-
-
-def _cursor_clear_up(n: int) -> None:
-    """从当前光标位置向上覆写清除 n 行输出，光标停在第一行行首。"""
-    if n <= 0:
-        return
-    # 先回车再擦除当前行，确保光标在行首
-    sys.stdout.write("\r\033[2K")
-    for _ in range(n - 1):
-        # 上移一行、回车行首、擦除整行
-        sys.stdout.write("\033[1A\r\033[2K")
-    sys.stdout.flush()
-
-
 class TypewriterDisplay:
     """打字机效果 + 完成后覆写为 Markdown。
 
-    仅终端（is_terminal=True）时启用 spinner 动画；
-    非终端（管道/重定向）直接输出文本，避免 Live 全屏渲染导致卡顿。
+    TTY 模式：用 rich Live(transient=True) 追踪流式纯文本输出，
+    完成后 stop() 自动清除全部输出，再一次性渲染 Markdown。
+    非终端（管道/重定向）直接输出文本。
     """
 
     def __init__(self):
@@ -76,6 +46,7 @@ class TypewriterDisplay:
         self._status: Status | None = None
         self._buffer = ""
         self._lock = threading.Lock()
+        self._live: Live | None = None
 
     def start_thinking(self):
         if not self._is_tty:
@@ -101,28 +72,31 @@ class TypewriterDisplay:
             self.stop_spinner()
         with self._lock:
             self._buffer += token
-        # 打字机：直接追加输出，避免 Live 逐帧全量重绘导致 CJK 残留
-        sys.stdout.write(token)
-        sys.stdout.flush()
+        if self._is_tty:
+            if self._live is None:
+                self._live = Live(
+                    Text(self._buffer),
+                    console=self._console,
+                    refresh_per_second=30,
+                    transient=True,
+                )
+                self._live.start()
+            else:
+                self._live.update(Text(self._buffer))
+        else:
+            sys.stdout.write(token)
+            sys.stdout.flush()
 
     def finish(self) -> str:
         with self._lock:
             result = self._buffer
             self._buffer = ""
+            if self._live:
+                self._live.stop()
+                self._live = None
         if result and self._is_tty:
-            self._rewrite_as_markdown(result)
+            console.print(Markdown(result))
         return result
-
-    def _rewrite_as_markdown(self, text: str) -> None:
-        """向上覆写打字机输出，替换为 Markdown 渲染。"""
-        width, height = _term_size()
-        lines = _rendered_lines(text, width)
-        if lines == 0:
-            return
-        # 计算打字机输出在当前屏幕内占用的行数（已滚出可视区的无法清除）
-        clear_lines = min(lines, height)
-        _cursor_clear_up(clear_lines)
-        console.print(Markdown(text))
 
 
 def _print_guard(event):
