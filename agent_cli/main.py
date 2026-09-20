@@ -1,7 +1,7 @@
 """L0 入口 - 仅命令解析。"""
 import click
 
-from .cli.commands import chat, run
+from .cli.commands import chat, run, config
 
 
 @click.group()
@@ -12,6 +12,7 @@ def cli():
 
 cli.add_command(chat)
 cli.add_command(run)
+cli.add_command(config)
 
 
 if __name__ == "__main__":

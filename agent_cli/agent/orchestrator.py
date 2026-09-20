@@ -222,6 +222,33 @@ class Orchestrator:
         """清空对话记忆。"""
         self.memory.clear()
 
+    def get_config_info(self) -> dict[str, Any]:
+        """返回当前 Agent 配置的摘要信息。"""
+        model = getattr(self.provider, "model_name", "unknown")
+        base_url = getattr(self.provider, "base_url", "unknown")
+
+        tools_by_source: dict[str, list[str]] = {}
+        for name, info in self._tool_lookup.items():
+            tools_by_source.setdefault(info.source, []).append(name)
+
+        mcp_tools: list[dict] = []
+        if self._mcp_registry:
+            for info in self._mcp_registry.get_tool_infos():
+                mcp_tools.append({
+                    "name": info.name,
+                    "category": info.category,
+                })
+
+        return {
+            "model": model,
+            "base_url": base_url,
+            "system_prompt_preview": self.system_prompt[:200]
+            + ("..." if len(self.system_prompt) > 200 else ""),
+            "total_tools": len(self._tool_lookup),
+            "tools_by_source": tools_by_source,
+            "mcp_tools": mcp_tools,
+        }
+
     def cleanup(self) -> None:
         """关闭外部连接（MCP server 等）。"""
         if self._mcp_registry:

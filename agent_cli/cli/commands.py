@@ -1,5 +1,7 @@
 """L0 CLI - chat / run 子命令实现。"""
 import json
+import math
+import shutil
 import sys
 import threading
 
@@ -7,7 +9,6 @@ import click
 from dotenv import load_dotenv
 
 from rich.console import Console
-from rich.live import Live
 from rich.markdown import Markdown
 from rich.rule import Rule
 from rich.spinner import Spinner
@@ -32,8 +33,38 @@ def _make_tag(source: str, category: str, name: str) -> str:
     return f"{source}/{name}"
 
 
+def _term_size() -> tuple[int, int]:
+    """获取终端宽度和高度。"""
+    size = shutil.get_terminal_size((80, 24))
+    return size.columns, size.lines
+
+
+def _rendered_lines(text: str, width: int) -> int:
+    """估算纯文本在终端宽度下 soft-wrap 后占用的行数（精确计算 CJK 宽字符）。"""
+    if not text:
+        return 0
+    text = text.rstrip("\n")
+    total = 0
+    for line in text.split("\n"):
+        cell = Text(line, no_wrap=True).cell_len
+        total += max(1, math.ceil(cell / width)) if cell else 1
+    return total
+
+
+def _cursor_clear_up(n: int) -> None:
+    """从当前光标位置向上覆写清除 n 行输出，光标停在第一行行首。"""
+    if n <= 0:
+        return
+    # 先回车再擦除当前行，确保光标在行首
+    sys.stdout.write("\r\033[2K")
+    for _ in range(n - 1):
+        # 上移一行、回车行首、擦除整行
+        sys.stdout.write("\033[1A\r\033[2K")
+    sys.stdout.flush()
+
+
 class TypewriterDisplay:
-    """管理 spinner + 打字机效果的终端显示。
+    """打字机效果 + 完成后覆写为 Markdown。
 
     仅终端（is_terminal=True）时启用 spinner 动画；
     非终端（管道/重定向）直接输出文本，避免 Live 全屏渲染导致卡顿。
@@ -44,7 +75,6 @@ class TypewriterDisplay:
         self._is_tty: bool = console.is_terminal
         self._status: Status | None = None
         self._buffer = ""
-        self._live = None
         self._lock = threading.Lock()
 
     def start_thinking(self):
@@ -70,52 +100,29 @@ class TypewriterDisplay:
         if self._is_tty:
             self.stop_spinner()
         with self._lock:
-            if self._is_tty:
-                if self._live is None:
-                    self._live = _LiveMarkdown(self._console)
-                self._live.append(token)
-            else:
-                sys.stdout.write(token)
-                sys.stdout.flush()
             self._buffer += token
+        # 打字机：直接追加输出，避免 Live 逐帧全量重绘导致 CJK 残留
+        sys.stdout.write(token)
+        sys.stdout.flush()
 
     def finish(self) -> str:
         with self._lock:
-            if self._live:
-                self._live.finish()
-                self._live = None
             result = self._buffer
             self._buffer = ""
+        if result and self._is_tty:
+            self._rewrite_as_markdown(result)
         return result
 
-
-class _LiveMarkdown:
-    """tty 模式：用 rich Live 渲染逐步增长的 Markdown，兼顾流式和格式化。"""
-
-    def __init__(self, console: Console):
-        self._console = console
-        self._live: Live | None = None
-        self._buffer = ""
-
-    def append(self, token: str):
-        self._buffer += token
-        if self._live is None:
-            self._live = Live(
-                Markdown(self._buffer),
-                console=self._console,
-                refresh_per_second=10,
-            )
-            self._live.start()
-        else:
-            self._live.update(Markdown(self._buffer))
-
-    def finish(self):
-        if self._live:
-            self._live.update(Markdown(self._buffer))
-            self._live.stop()
-            self._live = None
-        sys.stdout.write("\n")
-        sys.stdout.flush()
+    def _rewrite_as_markdown(self, text: str) -> None:
+        """向上覆写打字机输出，替换为 Markdown 渲染。"""
+        width, height = _term_size()
+        lines = _rendered_lines(text, width)
+        if lines == 0:
+            return
+        # 计算打字机输出在当前屏幕内占用的行数（已滚出可视区的无法清除）
+        clear_lines = min(lines, height)
+        _cursor_clear_up(clear_lines)
+        console.print(Markdown(text))
 
 
 def _print_guard(event):
@@ -205,6 +212,39 @@ def _print_act(event, display: TypewriterDisplay):
         )
     )
     console.print()
+
+
+def _print_config(agent: Orchestrator) -> None:
+    """打印当前 Agent 配置信息。"""
+    cfg = agent.get_config_info()
+
+    console.print(Rule(style="dim"))
+    console.print("[bold]模型配置[/bold]")
+    console.print(f"  模型: {cfg['model']}")
+    console.print(f"  接口: {cfg['base_url']}")
+    console.print()
+
+    console.print("[bold]系统提示词[/bold]")
+    console.print(f"  {cfg['system_prompt_preview']}")
+    console.print()
+
+    console.print("[bold]工具列表[/bold]")
+    for source, names in sorted(cfg["tools_by_source"].items()):
+        console.print(Text(f"  [{source}] ({len(names)} 个)"), markup=False)
+        for name in sorted(names):
+            info = agent._tool_lookup.get(name)
+            tag = _make_tag(source, info.category if info else "", name) if info else name
+            console.print(Text(f"    - {name}  {tag}"), markup=False)
+    console.print(f"\n  共 {cfg['total_tools']} 个工具")
+    console.print()
+
+    if cfg["mcp_tools"]:
+        console.print("[bold]MCP 工具详情[/bold]")
+        for mt in cfg["mcp_tools"]:
+            console.print(Text(f"    - {mt['name']}  ({mt['category']})"), markup=False)
+        console.print()
+
+    console.print(Rule(style="dim"))
 
 
 def _handle_events(agent: Orchestrator, user_input: str):
@@ -301,7 +341,7 @@ def run_repl(agent: Orchestrator) -> None:
             console.print("再见！")
             break
         elif cmd == "/help":
-            console.print("[dim]  /exit, /quit  - 退出对话\n  /clear        - 清空对话历史\n  /tools        - 列出所有已注册工具\n  /help         - 显示帮助[/dim]")
+            console.print("[dim]  /exit, /quit  - 退出对话\n  /clear        - 清空对话历史\n  /config       - 查看当前配置信息\n  /tools        - 列出所有已注册工具\n  /help         - 显示帮助[/dim]")
             continue
         elif cmd == "/tools":
             for name, info in sorted(agent._tool_lookup.items()):
@@ -323,6 +363,9 @@ def run_repl(agent: Orchestrator) -> None:
                     )
             console.print(f"\n[dim]共 {len(agent._tool_lookup)} 个工具[/dim]")
             console.print(Rule(style="dim"))
+            continue
+        elif cmd == "/config":
+            _print_config(agent)
             continue
         elif cmd == "/clear":
             agent.reset()
@@ -380,5 +423,30 @@ def run(prompt, system_prompt, mcp_servers, mcp_config, plugins_dir):
     agent = create_orchestrator(system_prompt, mcp_servers, mcp_config, plugins_dir)
     try:
         _handle_events(agent, prompt)
+    finally:
+        agent.cleanup()
+
+
+@click.command()
+@click.option(
+    "--system-prompt", "-s", default=None, help="自定义系统提示词"
+)
+@click.option(
+    "--mcp-server", "mcp_servers", multiple=True,
+    help="MCP server，格式：stdio:name:command:arg1,arg2 或 sse:name:url"
+)
+@click.option(
+    "--mcp-config", default=None,
+    help="MCP 配置文件路径（JSON 格式）"
+)
+@click.option(
+    "--plugins-dir", default="./plugins", help="插件目录路径"
+)
+def config(system_prompt, mcp_servers, mcp_config, plugins_dir):
+    """查看当前 Agent 配置信息（不启动对话）。"""
+    load_dotenv()
+    agent = create_orchestrator(system_prompt, mcp_servers, mcp_config, plugins_dir)
+    try:
+        _print_config(agent)
     finally:
         agent.cleanup()
