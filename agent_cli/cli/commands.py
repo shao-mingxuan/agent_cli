@@ -210,6 +210,9 @@ def _print_config(agent: Orchestrator) -> None:
     console.print("[bold]模型配置[/bold]")
     console.print(f"  模型: {cfg['model']}")
     console.print(f"  接口: {cfg['base_url']}")
+    mode = cfg.get("approval_mode", "sensitive")
+    approval_status = "全部审批" if mode == "full" else "敏感审批"
+    console.print(f"  审批: {approval_status}")
     console.print()
 
     active_skill = cfg.get("skill")
@@ -257,6 +260,9 @@ def _handle_events(agent: Orchestrator, user_input: str):
         elif event.step == StepType.THINK:
             _print_think(event, display)
 
+        elif event.step == StepType.APPROVE:
+            display.stop_spinner()
+
         elif event.step == StepType.ACT:
             _print_act(event, display)
 
@@ -270,6 +276,94 @@ def _handle_events(agent: Orchestrator, user_input: str):
                 console.print()
 
 
+def _full_approval_callback(tool_calls: list[dict]) -> list[bool]:
+    """严格审批回调：所有工具都需用户确认。"""
+    results = []
+    for tc in tool_calls:
+        name = tc.get("name", "unknown")
+        source = tc.get("source", "unknown")
+        category = tc.get("category", "")
+        args = tc.get("args", {})
+        sensitive = tc.get("sensitive", False)
+        tag = _make_tag(source, category, name)
+        label = Text.assemble(
+            ("  ⠂Approve  ", "bold magenta"),
+            (name, "bold"),
+            (f"  {tag}", "dim"),
+        )
+        if sensitive:
+            label.append_text(Text("  [敏感]", style="bold yellow"))
+        console.print(label)
+        for k, v in args.items():
+            console.print(
+                Text.assemble(
+                    ("          ", ""),
+                    (f"{k} = {repr(v)}", "dim"),
+                )
+            )
+        try:
+            choice = click.prompt(
+                "  [y/n]",
+                type=str,
+                default="y",
+                show_default=False,
+                prompt_suffix=" ",
+            )
+            results.append(choice.strip().lower() in ("y", ""))
+        except (EOFError, KeyboardInterrupt):
+            console.print()
+            results.append(False)
+    console.print()
+    return results
+
+
+def _sensitive_approval_callback(tool_calls: list[dict]) -> list[bool]:
+    """默认审批回调：敏感工具需用户确认，非敏感工具自动批准。"""
+    results = []
+    has_prompt = False
+    for tc in tool_calls:
+        sensitive = tc.get("sensitive", False)
+        if not sensitive:
+            results.append(True)
+            continue
+        name = tc.get("name", "unknown")
+        source = tc.get("source", "unknown")
+        category = tc.get("category", "")
+        args = tc.get("args", {})
+        tag = _make_tag(source, category, name)
+        has_prompt = True
+        console.print(
+            Text.assemble(
+                ("  ⠂Approve  ", "bold magenta"),
+                (name, "bold"),
+                (f"  {tag}", "dim"),
+                ("  [敏感]", "bold yellow"),
+            )
+        )
+        for k, v in args.items():
+            console.print(
+                Text.assemble(
+                    ("          ", ""),
+                    (f"{k} = {repr(v)}", "dim"),
+                )
+            )
+        try:
+            choice = click.prompt(
+                "  [y/n]",
+                type=str,
+                default="y",
+                show_default=False,
+                prompt_suffix=" ",
+            )
+            results.append(choice.strip().lower() in ("y", ""))
+        except (EOFError, KeyboardInterrupt):
+            console.print()
+            results.append(False)
+    if has_prompt:
+        console.print()
+    return results
+
+
 def create_orchestrator(
     system_prompt: str | None = None,
     mcp_servers: tuple[str, ...] = (),
@@ -277,6 +371,7 @@ def create_orchestrator(
     plugins_dir: str = "./plugins",
     skill_name: str | None = None,
     skills_dir: str = "./skills",
+    approval: bool = False,
 ) -> Orchestrator:
     """创建 Orchestrator 实例，加载内置 + MCP + 插件工具。"""
     provider = OpenAICompatProvider()
@@ -320,6 +415,10 @@ def create_orchestrator(
             f"[dim]技能 '{active_skill.name}' 已激活: {active_skill.description}[/dim]"
         )
 
+    approval_cb = (
+        _full_approval_callback if approval else _sensitive_approval_callback
+    )
+
     return Orchestrator(
         provider=provider,
         memory=memory,
@@ -327,7 +426,44 @@ def create_orchestrator(
         mcp_registry=mcp_registry,
         extra_tool_infos=plugin_infos,
         skill=active_skill,
+        approval_callback=approval_cb,
     )
+
+
+def _read_multiline_input() -> str:
+    """读取用户输入，支持多行粘贴。
+
+    当已输入内容中 ASCII 括号未闭合时，继续收集下一行；
+    遇到空行或括号闭合后提交。避免粘贴多行代码被终端拆成多次独立输入。
+    """
+
+    def _brackets_balanced(text: str) -> bool:
+        pairs = {")": "(", "]": "[", "}": "{"}
+        stack: list[str] = []
+        for ch in text:
+            if ch in "([{":
+                stack.append(ch)
+            elif ch in ")]}":
+                if not stack or stack[-1] != pairs[ch]:
+                    return True
+                stack.pop()
+        return len(stack) == 0
+
+    lines: list[str] = []
+    while True:
+        try:
+            prompt_text = "你" if not lines else "… "
+            line = click.prompt(
+                prompt_text, type=str, default="", show_default=False
+            )
+        except (EOFError, click.exceptions.Abort):
+            break
+        if not line:
+            break
+        lines.append(line)
+        if _brackets_balanced("\n".join(lines)):
+            break
+    return "\n".join(lines)
 
 
 def run_repl(agent: Orchestrator) -> None:
@@ -337,7 +473,7 @@ def run_repl(agent: Orchestrator) -> None:
 
     while True:
         try:
-            user_input = click.prompt("你", type=str, default="", show_default=False)
+            user_input = _read_multiline_input()
             if user_input.strip() == "":
                 continue
         except (EOFError, click.exceptions.Abort):
@@ -357,6 +493,7 @@ def run_repl(agent: Orchestrator) -> None:
                 "  /tools        - 列出所有已注册工具\n"
                 "  /skills       - 列出所有可用技能\n"
                 "  /skill <name> - 切换到指定技能\n"
+                "  /approve on|off - 全部审批 / 仅敏感审批\n"
                 "  /help         - 显示帮助"
                 "[/dim]"
             )
@@ -425,6 +562,20 @@ def run_repl(agent: Orchestrator) -> None:
             agent.reset()
             console.print("[dim]对话历史已清空。[/dim]")
             continue
+        elif cmd.startswith("/approve"):
+            flag = user_input.strip()[8:].strip().lower()
+            if flag == "on":
+                agent.set_approval_callback(_full_approval_callback)
+                console.print("[dim]审批模式: 全部工具需手动确认[/dim]")
+            elif flag == "off":
+                agent.set_approval_callback(_sensitive_approval_callback)
+                console.print("[dim]审批模式: 仅敏感工具需手动确认[/dim]")
+            else:
+                mode = agent.get_config_info().get("approval_mode", "sensitive")
+                status = "全部审批" if mode == "full" else "敏感审批"
+                console.print(f"[dim]当前审批状态: {status}。用法: /approve on|off[/dim]")
+            console.print(Rule(style="dim"))
+            continue
 
         _handle_events(agent, user_input)
         console.print(Rule(style="dim"))
@@ -448,10 +599,13 @@ def run_repl(agent: Orchestrator) -> None:
 @click.option(
     "--skill", "skill_name", default=None, help="激活指定技能"
 )
-def chat(system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name):
+@click.option(
+    "--approve", is_flag=True, default=False, help="启用工具调用审批"
+)
+def chat(system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name, approve):
     """启动交互式对话。"""
     load_dotenv()
-    agent = create_orchestrator(system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name)
+    agent = create_orchestrator(system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name, approval=approve)
     try:
         run_repl(agent)
     finally:
@@ -477,10 +631,13 @@ def chat(system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name):
 @click.option(
     "--skill", "skill_name", default=None, help="激活指定技能"
 )
-def run(prompt, system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name):
+@click.option(
+    "--approve", is_flag=True, default=False, help="启用工具调用审批"
+)
+def run(prompt, system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name, approve):
     """单次执行一个问题。"""
     load_dotenv()
-    agent = create_orchestrator(system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name)
+    agent = create_orchestrator(system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name, approval=approve)
     try:
         _handle_events(agent, prompt)
     finally:
@@ -505,10 +662,13 @@ def run(prompt, system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name)
 @click.option(
     "--skill", "skill_name", default=None, help="激活指定技能"
 )
-def config(system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name):
+@click.option(
+    "--approve", is_flag=True, default=False, help="启用工具调用审批"
+)
+def config(system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name, approve):
     """查看当前 Agent 配置信息（不启动对话）。"""
     load_dotenv()
-    agent = create_orchestrator(system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name)
+    agent = create_orchestrator(system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name, approval=approve)
     try:
         _print_config(agent)
     finally:

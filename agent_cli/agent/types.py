@@ -15,6 +15,7 @@ class StepType:
     THINKING = "thinking"
     TOKEN = "token"
     GUARD = "guard"
+    APPROVE = "approve"
 
 
 @dataclass

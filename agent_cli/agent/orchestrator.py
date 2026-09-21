@@ -1,8 +1,9 @@
 """L1 编排核心 - Agent 循环主控。"""
-from typing import Any, Iterator
+import uuid
+from typing import Any, Callable, Iterator
 
 from langchain.agents import create_agent
-from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
 from ..memory.working import WorkingMemory
 from ..providers.base import BaseProvider
@@ -16,6 +17,18 @@ from .types import AgentState, AgentEvent, StepType
 
 MAX_TOOL_FAILURES = 3
 _TOOL_ERROR_MARKERS = ("error", "mcp error", "exception", "traceback", "failed")
+
+# 敏感工具关键词：匹配工具名或分类，命中则触发人工审批
+_SENSITIVE_KEYWORDS = (
+    "file", "write", "delete", "remove", "create", "mkdir", "rmdir",
+    "shell", "exec", "bash", "sh", "command", "run", "spawn",
+    "sql", "database", "db", "insert", "update", "drop",
+    "code", "edit", "modify", "patch", "git", "commit", "push", "pull",
+    "fs", "filesystem", "read_file", "write_file", "edit_file",
+    "read_directory", "list_directory", "search_files", "fs_",
+    "move", "copy", "rename", "chmod", "chown",
+    "query", "search", "local", "path",
+)
 
 
 def _is_tool_error(content: str) -> bool:
@@ -39,6 +52,7 @@ class Orchestrator:
         mcp_registry: MCPRegistry | None = None,
         extra_tool_infos: list[ToolInfo] | None = None,
         skill: Skill | None = None,
+        approval_callback: Callable[[list[dict]], list[bool]] | None = None,
     ):
         self.provider = provider
         self.model = provider.get_model()
@@ -47,6 +61,12 @@ class Orchestrator:
         self._mcp_registry = mcp_registry
         self._active_skill = skill
         self._base_system_prompt = system_prompt
+        self._approval_callback = (
+            approval_callback
+            if approval_callback is not None
+            else self._builtin_approval_callback
+        )
+        self._thread_id = "default"
 
         self.registry = create_default_registry()
 
@@ -81,10 +101,17 @@ class Orchestrator:
             self.tools = self.registry.get_all()
             self._tool_lookup = {info.name: info for info in self._all_tools_info}
 
+        from langgraph.checkpoint.memory import MemorySaver
+
+        checkpointer = MemorySaver()
+        interrupt_before = ["tools"]
+
         self.agent = create_agent(
             model=self.model,
             tools=self.tools,
             system_prompt=self.system_prompt,
+            checkpointer=checkpointer,
+            interrupt_before=interrupt_before,
         )
 
     def set_skill(self, skill: Skill | None) -> None:
@@ -100,16 +127,127 @@ class Orchestrator:
         """获取当前激活的技能。"""
         return self._active_skill
 
+    def set_approval_callback(
+        self, callback: Callable[[list[dict]], list[bool]] | None
+    ) -> None:
+        """设置审批回调，并重建 agent。
+
+        传入 None 时使用内置默认回调（自动批准非敏感工具，自动拒绝敏感工具）。
+        """
+        self._approval_callback = (
+            callback
+            if callback is not None
+            else self._builtin_approval_callback
+        )
+        self._apply_skill()
+
+    def _is_sensitive_tool(self, tool_call: dict) -> bool:
+        """判断工具调用是否为敏感操作（需要人工审批）。
+
+        匹配工具名和分类中的关键词，命中即视为敏感。
+        """
+        name = tool_call.get("name", "").lower()
+        category = tool_call.get("category", "").lower()
+        combined = f"{name} {category}"
+        return any(kw in combined for kw in _SENSITIVE_KEYWORDS)
+
+    @staticmethod
+    def _builtin_approval_callback(tool_calls: list[dict]) -> list[bool]:
+        """内置默认审批回调：非敏感自动通过，敏感自动拒绝（安全默认）。"""
+        return [not tc.get("sensitive", False) for tc in tool_calls]
+
+    def _extract_pending_tool_calls(self) -> list[dict]:
+        """从中断状态中提取待审批的工具调用。"""
+        config = {"configurable": {"thread_id": self._thread_id}}
+        state = self.agent.get_state(config)
+        messages = state.values.get("messages", [])
+        pending = []
+        for msg in reversed(messages):
+            tool_calls = getattr(msg, "tool_calls", None)
+            if tool_calls:
+                for tc in tool_calls:
+                    name = tc["name"]
+                    args = tc.get("args", {})
+                    info = self._tool_lookup.get(name)
+                    pending.append(
+                        {
+                            "id": tc["id"],
+                            "name": name,
+                            "args": args,
+                            "source": info.source if info else "unknown",
+                            "category": info.category if info else "",
+                            "sensitive": self._is_sensitive_tool(
+                                {
+                                    "name": name,
+                                    "category": info.category if info else "",
+                                }
+                            ),
+                        }
+                    )
+                break
+        return pending
+
+    def _last_model_output_is_question(self, config: dict) -> bool:
+        """检查对话中最后一条 AIMessage 的纯文本是否以问号结尾。
+
+        用于追问兜底：如果模型正在向用户澄清（以问号结尾的追问），
+        同一回合不应再继续执行任何工具调用。
+        """
+        state = self.agent.get_state(config)
+        messages = state.values.get("messages", [])
+        for msg in reversed(messages):
+            if isinstance(msg, AIMessage):
+                content = msg.content
+                if isinstance(content, str) and content.strip():
+                    return content.strip().endswith(("?", "？"))
+                break
+        return False
+
+    def _append_question_text_to_response(
+        self, config: dict, respond_chunks: list[str]
+    ) -> None:
+        """把模型追问文本追加到 respond_chunks。
+
+        追问兜底触发时，模型可能在同一个 AIMessage 里既输出追问文本又发起了
+        工具调用，此时文本已被跳过未累积。这里从 checkpoint 中找回它，
+        确保 break 后追问内容能作为最终回复输出给用户。
+        """
+        state = self.agent.get_state(config)
+        messages = state.values.get("messages", [])
+        for msg in reversed(messages):
+            if isinstance(msg, AIMessage):
+                content = msg.content
+                if isinstance(content, str) and content.strip():
+                    respond_chunks.append(content)
+                break
+
+    def _handle_rejection(self, rejected_ids: list[str]) -> None:
+        """对被拒绝的工具调用注入拒绝 ToolMessage 并更新状态。"""
+        config = {"configurable": {"thread_id": self._thread_id}}
+        rejected_msgs = [
+            ToolMessage(
+                content="用户拒绝了此工具调用。",
+                name="rejected",
+                tool_call_id=tc_id,
+            )
+            for tc_id in rejected_ids
+        ]
+        if rejected_msgs:
+            self.agent.update_state(
+                config, {"messages": rejected_msgs}, as_node="tools"
+            )
+
     def run_stream(self, user_input: str) -> Iterator[AgentEvent]:
-        """逐步 yield guard/thinking/think/act/token/respond 事件。
+        """逐步 yield guard/thinking/think/act/token/respond/approve 事件。
 
         事件顺序：
         0. GUARD     — 前置安全检测（拦截或警告）
         1. THINKING  — 模型开始推理（spinner）
         2. THINK     — 模型决定调用工具（工具名/参数/标签）
-        3. ACT       — 工具执行结果
-        4. TOKEN     — 最终回复的逐 token 流（打字机效果）
-        5. RESPOND   — 最终回复结束
+        3. APPROVE   — 工具调用前等待审批（仅启用审批时）
+        4. ACT       — 工具执行结果
+        5. TOKEN     — 最终回复的逐 token 流（打字机效果）
+        6. RESPOND   — 最终回复结束
         """
         pre_guard = self.middleware.before_run(user_input)
         yield AgentEvent(
@@ -136,137 +274,230 @@ class Orchestrator:
             processed_input = self._active_skill.preprocess(user_input)
 
         self.memory.add_human(processed_input)
-        inputs = {"messages": self.memory.get_messages()}
+        self._thread_id = str(uuid.uuid4())
+        config = {"configurable": {"thread_id": self._thread_id}}
         pending_tool_calls: dict[str, dict] = {}
-        # 跟踪当前模型调用的 run_id，用于区分不同轮次
-        current_run_id: str | None = None
-        # 记录是否已经为当前 run_id 发出过 thinking 事件
-        thinking_sent_for_runs: set[str] = set()
-        # 记录哪些 run_id 是有 tool_calls 的（非最终回复）
-        run_ids_with_tools: set[str] = set()
-        # 拼接最终回复
+
+        yield from self._run_stream_with_approval(
+            user_input, config, pending_tool_calls
+        )
+
+    def _run_stream_with_approval(
+        self,
+        user_input: str,
+        config: dict,
+        pending_tool_calls: dict[str, dict],
+    ) -> Iterator[AgentEvent]:
+        """带审批模式的流式执行：工具调用前暂停等用户确认。"""
+        inputs = {"messages": self.memory.get_messages()}
         respond_chunks: list[str] = []
-        # 跟踪是否已经发出了 THINK 事件
-        think_emitted = False
-        # 工具连续失败计数
+        current_run_id: str | None = None
+        thinking_sent_for_runs: set[str] = set()
+        run_ids_with_tools: set[str] = set()
         consecutive_failures = 0
-        # 是否因失败过多而中止
         aborted = False
+        stream_input = inputs
 
-        for chunk in self.agent.stream(inputs, stream_mode=["messages", "updates"]):
-            mode, data = chunk
+        while True:
+            interrupted = False
 
-            if mode == "messages":
-                msg, metadata = data
-                node = metadata.get("langgraph_node", "unknown")
-                msg_type = type(msg).__name__
-                run_id = getattr(msg, "id", "")
+            for chunk in self.agent.stream(
+                stream_input, config=config, stream_mode=["messages", "updates"]
+            ):
+                mode, data = chunk
 
-                if node == "model" and msg_type == "AIMessageChunk":
-                    tool_calls = getattr(msg, "tool_calls", None)
+                # 检测中断
+                if mode == "updates" and "__interrupt__" in data:
+                    interrupted = True
+                    continue
 
-                    # 新的模型调用轮次开始
-                    if run_id and run_id != current_run_id:
-                        current_run_id = run_id
-                        think_emitted = False
-                        # 如果还没为这个 run_id 发过 thinking，发一次
-                        if run_id not in thinking_sent_for_runs:
-                            yield AgentEvent(step=StepType.THINKING, content="")
-                            thinking_sent_for_runs.add(run_id)
+                if mode == "messages":
+                    msg, metadata = data
+                    node = metadata.get("langgraph_node", "unknown")
+                    msg_type = type(msg).__name__
+                    run_id = getattr(msg, "id", "")
 
-                    if tool_calls:
-                        run_ids_with_tools.add(run_id)
-                        # tool_calls 在 chunk 中累积，updates 模式会给出完整 AIMessage
-                        # 这里不 yield，等 updates 模式的完整消息
+                    if node == "model" and msg_type == "AIMessageChunk":
+                        tool_calls = getattr(msg, "tool_calls", None)
+
+                        if run_id and run_id != current_run_id:
+                            current_run_id = run_id
+                            if run_id not in thinking_sent_for_runs:
+                                yield AgentEvent(
+                                    step=StepType.THINKING, content=""
+                                )
+                                thinking_sent_for_runs.add(run_id)
+
+                        if tool_calls:
+                            run_ids_with_tools.add(run_id)
+                            continue
+
+                        content = getattr(msg, "content", "")
+                        if content:
+                            if run_id not in run_ids_with_tools:
+                                yield AgentEvent(
+                                    step=StepType.TOKEN,
+                                    content=content,
+                                )
+                                respond_chunks.append(content)
+
+                elif mode == "updates":
+                    for node_name, node_output in data.items():
+                        for msg in node_output.get("messages", []):
+                            if node_name == "model":
+                                tool_calls = getattr(msg, "tool_calls", None)
+                                if tool_calls:
+                                    tool_details = []
+                                    for tc in tool_calls:
+                                        name = tc["name"]
+                                        args = tc.get("args", {})
+                                        info = self._tool_lookup.get(name)
+                                        source = info.source if info else "unknown"
+                                        category = info.category if info else ""
+                                        pending_tool_calls[tc["id"]] = {
+                                            "name": name,
+                                            "source": source,
+                                            "category": category,
+                                            "args": args,
+                                        }
+                                        tool_details.append(
+                                            {
+                                                "name": name,
+                                                "source": source,
+                                                "category": category,
+                                                "args": args,
+                                            }
+                                        )
+                                    yield AgentEvent(
+                                        step=StepType.THINK,
+                                        content="",
+                                        metadata={
+                                            "tool_details": tool_details
+                                        },
+                                    )
+                                    self.memory.add_message(msg)
+                                else:
+                                    content = getattr(msg, "content", "")
+                                    self.memory.add_ai(content)
+                            elif node_name == "tools":
+                                tc_id = getattr(msg, "tool_call_id", "")
+                                info = pending_tool_calls.pop(tc_id, {})
+                                tool_content = (
+                                    msg.content
+                                    if isinstance(msg.content, str)
+                                    else str(msg.content)
+                                )
+
+                                if _is_tool_error(tool_content):
+                                    consecutive_failures += 1
+                                else:
+                                    consecutive_failures = 0
+
+                                yield AgentEvent(
+                                    step=StepType.ACT,
+                                    content=tool_content,
+                                    metadata={
+                                        "tool_name": info.get("name", "unknown"),
+                                        "tool_source": info.get(
+                                            "source", "unknown"
+                                        ),
+                                        "tool_category": info.get("category", ""),
+                                        "tool_args": info.get("args", {}),
+                                        "tool_call_id": tc_id,
+                                    },
+                                )
+                                self.memory.add_message(msg)
+
+                                if consecutive_failures >= MAX_TOOL_FAILURES:
+                                    aborted = True
+                                    break
+
+                        if aborted:
+                            break
+
+                if aborted:
+                    break
+
+            if interrupted:
+                # 追问兜底：读取模型本次完整输出，若以问号结尾（正在向用户澄清），
+                # 同一回合立即停止，不再执行任何工具，等待用户回复后再继续。
+                if self._last_model_output_is_question(config):
+                    self._append_question_text_to_response(config, respond_chunks)
+                    break
+
+                # 提取待审批工具调用
+                pending = self._extract_pending_tool_calls()
+                if pending:
+                    # 只拦截敏感工具；非敏感工具自动放行
+                    sensitive = [tc for tc in pending if tc.get("sensitive", False)]
+                    if not sensitive:
+                        stream_input = None
                         continue
 
-                    # 有 content 的 token
-                    content = getattr(msg, "content", "")
-                    if content:
-                        # 如果这个 run_id 不在 tools 集合中，说明是最终回复的 token
-                        if run_id not in run_ids_with_tools:
-                            yield AgentEvent(
-                                step=StepType.TOKEN,
-                                content=content,
-                            )
-                            respond_chunks.append(content)
+                    yield AgentEvent(
+                        step=StepType.APPROVE,
+                        content="",
+                        metadata={"tool_calls": pending},
+                    )
 
-            elif mode == "updates":
-                for node_name, node_output in data.items():
-                    for msg in node_output.get("messages", []):
-                        if node_name == "model":
-                            tool_calls = getattr(msg, "tool_calls", None)
-                            if tool_calls:
-                                tool_details = []
-                                for tc in tool_calls:
-                                    name = tc["name"]
-                                    args = tc.get("args", {})
-                                    info = self._tool_lookup.get(name)
-                                    source = info.source if info else "unknown"
-                                    category = info.category if info else ""
-                                    pending_tool_calls[tc["id"]] = {
-                                        "name": name,
-                                        "source": source,
-                                        "category": category,
-                                        "args": args,
-                                    }
-                                    tool_details.append({
-                                        "name": name,
-                                        "source": source,
-                                        "category": category,
-                                        "args": args,
-                                    })
+                    # 调用审批回调
+                    approved_list = self._approval_callback(pending)
+
+                    # 分离批准和拒绝
+                    rejected_ids = [
+                        tc["id"]
+                        for tc, approved in zip(pending, approved_list)
+                        if not approved
+                    ]
+                    approved_ids = [
+                        tc["id"]
+                        for tc, approved in zip(pending, approved_list)
+                        if approved
+                    ]
+
+                    # 如果有被拒绝的工具，注入拒绝消息
+                    if rejected_ids:
+                        self._handle_rejection(rejected_ids)
+                        # yield 拒绝的 ACT 事件
+                        for tc in pending:
+                            if tc["id"] in rejected_ids:
                                 yield AgentEvent(
-                                    step=StepType.THINK,
-                                    content="",
-                                    metadata={"tool_details": tool_details},
+                                    step=StepType.ACT,
+                                    content="用户拒绝了此工具调用。",
+                                    metadata={
+                                        "tool_name": tc["name"],
+                                        "tool_source": tc.get("source", "unknown"),
+                                        "tool_category": tc.get("category", ""),
+                                        "tool_args": tc.get("args", {}),
+                                        "tool_call_id": tc["id"],
+                                        "rejected": True,
+                                    },
                                 )
-                                think_emitted = True
-                                self.memory.add_message(msg)
-                            else:
-                                content = getattr(msg, "content", "")
-                                self.memory.add_ai(content)
-                        elif node_name == "tools":
-                            tc_id = getattr(msg, "tool_call_id", "")
-                            info = pending_tool_calls.pop(tc_id, {})
-                            tool_content = msg.content if isinstance(msg.content, str) else str(msg.content)
-
-                            if _is_tool_error(tool_content):
                                 consecutive_failures += 1
-                            else:
-                                consecutive_failures = 0
 
-                            yield AgentEvent(
-                                step=StepType.ACT,
-                                content=tool_content,
-                                metadata={
-                                    "tool_name": info.get("name", "unknown"),
-                                    "tool_source": info.get("source", "unknown"),
-                                    "tool_category": info.get("category", ""),
-                                    "tool_args": info.get("args", {}),
-                                    "tool_call_id": tc_id,
-                                },
-                            )
-                            self.memory.add_message(msg)
+                        if consecutive_failures >= MAX_TOOL_FAILURES:
+                            aborted = True
+                            break
 
-                            if consecutive_failures >= MAX_TOOL_FAILURES:
-                                aborted = True
-                                break
+                    # 恢复执行（None 表示从断点继续）
+                    stream_input = None
+                    continue
+                else:
+                    # 没有待审批的工具，直接恢复
+                    stream_input = None
+                    continue
 
-                    if aborted:
-                        break
+            # 没有中断，退出循环
+            break
 
-        # 后置安全检测
+        # 后置处理
         full_response = "".join(respond_chunks)
-
-        # 工具连续失败中止
         if aborted:
             full_response = (
                 f"工具连续调用失败 {consecutive_failures} 次，已中止执行。"
                 "请检查 MCP 工具配置或参数是否正确，然后重试。"
             )
 
-        # 应用 skill 后处理
         if self._active_skill and self._active_skill.postprocess:
             full_response = self._active_skill.postprocess(full_response)
 
@@ -315,10 +546,12 @@ class Orchestrator:
         mcp_tools: list[dict] = []
         if self._mcp_registry:
             for info in self._mcp_registry.get_tool_infos():
-                mcp_tools.append({
-                    "name": info.name,
-                    "category": info.category,
-                })
+                mcp_tools.append(
+                    {
+                        "name": info.name,
+                        "category": info.category,
+                    }
+                )
 
         skill_info = None
         if self._active_skill:
@@ -337,6 +570,11 @@ class Orchestrator:
             "tools_by_source": tools_by_source,
             "mcp_tools": mcp_tools,
             "skill": skill_info,
+            "approval_mode": (
+                "full"
+                if self._approval_callback is not self._builtin_approval_callback
+                else "sensitive"
+            ),
         }
 
     def cleanup(self) -> None:
