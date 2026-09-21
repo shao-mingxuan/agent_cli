@@ -1,6 +1,6 @@
 """L2 提示词 - 默认 system prompt。"""
 
-from .base import BASE_BEHAVIOR, BASE_SAFETY, BASE_TOOL_USAGE, BASE_TOOLS_SECTION
+from .base import BASE_BEHAVIOR, BASE_INPUT_HANDLING, BASE_SAFETY, BASE_TOOL_USAGE, BASE_TOOLS_SECTION
 
 DEFAULT_SYSTEM_PROMPT = f"""\
 你是一个智能助手，能够通过调用工具来回答问题和完成任务。
@@ -41,6 +41,7 @@ DEFAULT_SYSTEM_PROMPT = f"""\
 
 {BASE_TOOLS_SECTION}
 {BASE_TOOL_USAGE}
+{BASE_INPUT_HANDLING}
 ## 回答规范
 
 1. **用中文回答**，除非用户用其他语言提问。

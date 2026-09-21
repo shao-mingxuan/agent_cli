@@ -11,7 +11,19 @@ from ..tools.registry import ToolRegistry, create_default_registry, ToolInfo
 from ..middleware.pipeline import MiddlewarePipeline, create_default_pipeline
 from ..middleware.types import GuardResult
 from ..mcp.registry import MCPRegistry
+from ..skills.define_skill import Skill
 from .types import AgentState, AgentEvent, StepType
+
+MAX_TOOL_FAILURES = 3
+_TOOL_ERROR_MARKERS = ("error", "mcp error", "exception", "traceback", "failed")
+
+
+def _is_tool_error(content: str) -> bool:
+    """检测工具返回内容是否为错误。"""
+    if not content:
+        return False
+    lower = content.lower()
+    return any(marker in lower for marker in _TOOL_ERROR_MARKERS)
 
 
 class Orchestrator:
@@ -26,13 +38,15 @@ class Orchestrator:
         middleware: MiddlewarePipeline | None = None,
         mcp_registry: MCPRegistry | None = None,
         extra_tool_infos: list[ToolInfo] | None = None,
+        skill: Skill | None = None,
     ):
         self.provider = provider
         self.model = provider.get_model()
         self.memory = memory or WorkingMemory()
-        self.system_prompt = system_prompt
         self.middleware = middleware or create_default_pipeline()
         self._mcp_registry = mcp_registry
+        self._active_skill = skill
+        self._base_system_prompt = system_prompt
 
         self.registry = create_default_registry()
 
@@ -44,15 +58,47 @@ class Orchestrator:
             for info in mcp_registry.get_tool_infos():
                 self.registry.register(info.tool, source=info.source, category=info.category)
 
-        self.tools = self.registry.get_all()
-        self._tool_lookup = {
-            info.name: info for info in self.registry.get_all_info()
-        }
+        self._all_tools_info = self.registry.get_all_info()
+        self._tool_lookup = {info.name: info for info in self._all_tools_info}
+
+        # 应用 skill 配置并创建 agent
+        self._apply_skill()
+
+    def _apply_skill(self) -> None:
+        """根据当前 skill 过滤工具和设置 prompt，并重建 agent。"""
+        if self._active_skill:
+            self.system_prompt = self._active_skill.system_prompt
+            if self._active_skill.tool_allowlist is not None:
+                allowed = set(self._active_skill.tool_allowlist)
+                filtered = [info for info in self._all_tools_info if info.name in allowed]
+                self.tools = [info.tool for info in filtered]
+                self._tool_lookup = {info.name: info for info in filtered}
+            else:
+                self.tools = self.registry.get_all()
+                self._tool_lookup = {info.name: info for info in self._all_tools_info}
+        else:
+            self.system_prompt = self._base_system_prompt
+            self.tools = self.registry.get_all()
+            self._tool_lookup = {info.name: info for info in self._all_tools_info}
+
         self.agent = create_agent(
             model=self.model,
             tools=self.tools,
             system_prompt=self.system_prompt,
         )
+
+    def set_skill(self, skill: Skill | None) -> None:
+        """动态切换技能。
+
+        切换后会清空记忆，因为上下文可能不适用于新的 skill。
+        """
+        self._active_skill = skill
+        self.memory.clear()
+        self._apply_skill()
+
+    def get_active_skill(self) -> Skill | None:
+        """获取当前激活的技能。"""
+        return self._active_skill
 
     def run_stream(self, user_input: str) -> Iterator[AgentEvent]:
         """逐步 yield guard/thinking/think/act/token/respond 事件。
@@ -84,7 +130,12 @@ class Orchestrator:
             )
             return
 
-        self.memory.add_human(user_input)
+        # 应用 skill 预处理
+        processed_input = user_input
+        if self._active_skill and self._active_skill.preprocess:
+            processed_input = self._active_skill.preprocess(user_input)
+
+        self.memory.add_human(processed_input)
         inputs = {"messages": self.memory.get_messages()}
         pending_tool_calls: dict[str, dict] = {}
         # 跟踪当前模型调用的 run_id，用于区分不同轮次
@@ -97,6 +148,10 @@ class Orchestrator:
         respond_chunks: list[str] = []
         # 跟踪是否已经发出了 THINK 事件
         think_emitted = False
+        # 工具连续失败计数
+        consecutive_failures = 0
+        # 是否因失败过多而中止
+        aborted = False
 
         for chunk in self.agent.stream(inputs, stream_mode=["messages", "updates"]):
             mode, data = chunk
@@ -174,9 +229,16 @@ class Orchestrator:
                         elif node_name == "tools":
                             tc_id = getattr(msg, "tool_call_id", "")
                             info = pending_tool_calls.pop(tc_id, {})
+                            tool_content = msg.content if isinstance(msg.content, str) else str(msg.content)
+
+                            if _is_tool_error(tool_content):
+                                consecutive_failures += 1
+                            else:
+                                consecutive_failures = 0
+
                             yield AgentEvent(
                                 step=StepType.ACT,
-                                content=msg.content,
+                                content=tool_content,
                                 metadata={
                                     "tool_name": info.get("name", "unknown"),
                                     "tool_source": info.get("source", "unknown"),
@@ -187,8 +249,27 @@ class Orchestrator:
                             )
                             self.memory.add_message(msg)
 
+                            if consecutive_failures >= MAX_TOOL_FAILURES:
+                                aborted = True
+                                break
+
+                    if aborted:
+                        break
+
         # 后置安全检测
         full_response = "".join(respond_chunks)
+
+        # 工具连续失败中止
+        if aborted:
+            full_response = (
+                f"工具连续调用失败 {consecutive_failures} 次，已中止执行。"
+                "请检查 MCP 工具配置或参数是否正确，然后重试。"
+            )
+
+        # 应用 skill 后处理
+        if self._active_skill and self._active_skill.postprocess:
+            full_response = self._active_skill.postprocess(full_response)
+
         post_guard = self.middleware.after_run(user_input, full_response)
         if post_guard.findings:
             yield AgentEvent(
@@ -239,6 +320,14 @@ class Orchestrator:
                     "category": info.category,
                 })
 
+        skill_info = None
+        if self._active_skill:
+            skill_info = {
+                "name": self._active_skill.name,
+                "description": self._active_skill.description,
+                "tool_allowlist": self._active_skill.tool_allowlist,
+            }
+
         return {
             "model": model,
             "base_url": base_url,
@@ -247,6 +336,7 @@ class Orchestrator:
             "total_tools": len(self._tool_lookup),
             "tools_by_source": tools_by_source,
             "mcp_tools": mcp_tools,
+            "skill": skill_info,
         }
 
     def cleanup(self) -> None:

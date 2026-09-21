@@ -23,6 +23,7 @@ from ..providers.openai_compat import OpenAICompatProvider
 from ..prompts.builtin.default import DEFAULT_SYSTEM_PROMPT
 from ..mcp import MCPRegistry, parse_mcp_server_spec, load_mcp_servers_from_config
 from ..tools.loader import load_plugins
+from ..skills.loader import load_skill_registry
 
 
 console = Console()
@@ -211,6 +212,15 @@ def _print_config(agent: Orchestrator) -> None:
     console.print(f"  接口: {cfg['base_url']}")
     console.print()
 
+    active_skill = cfg.get("skill")
+    if active_skill:
+        console.print("[bold]当前技能[/bold]")
+        console.print(f"  名称: {active_skill['name']}")
+        console.print(f"  描述: {active_skill['description']}")
+        if active_skill.get("tool_allowlist"):
+            console.print(f"  可用工具: {', '.join(active_skill['tool_allowlist'])}")
+        console.print()
+
     console.print("[bold]系统提示词[/bold]")
     console.print(f"  {cfg['system_prompt_preview']}")
     console.print()
@@ -265,6 +275,8 @@ def create_orchestrator(
     mcp_servers: tuple[str, ...] = (),
     mcp_config: str | None = None,
     plugins_dir: str = "./plugins",
+    skill_name: str | None = None,
+    skills_dir: str = "./skills",
 ) -> Orchestrator:
     """创建 Orchestrator 实例，加载内置 + MCP + 插件工具。"""
     provider = OpenAICompatProvider()
@@ -300,12 +312,21 @@ def create_orchestrator(
         for info in plugin_infos:
             console.print(f"[dim]插件 '{info.name}' 已加载 ({info.source}/{info.category})[/dim]")
 
+    # 加载技能
+    skill_registry = load_skill_registry(skills_dir)
+    active_skill = skill_registry.get(skill_name) if skill_name else None
+    if active_skill:
+        console.print(
+            f"[dim]技能 '{active_skill.name}' 已激活: {active_skill.description}[/dim]"
+        )
+
     return Orchestrator(
         provider=provider,
         memory=memory,
         system_prompt=system_prompt or DEFAULT_SYSTEM_PROMPT,
         mcp_registry=mcp_registry,
         extra_tool_infos=plugin_infos,
+        skill=active_skill,
     )
 
 
@@ -328,7 +349,17 @@ def run_repl(agent: Orchestrator) -> None:
             console.print("再见！")
             break
         elif cmd == "/help":
-            console.print("[dim]  /exit, /quit  - 退出对话\n  /clear        - 清空对话历史\n  /config       - 查看当前配置信息\n  /tools        - 列出所有已注册工具\n  /help         - 显示帮助[/dim]")
+            console.print(
+                "[dim]"
+                "  /exit, /quit  - 退出对话\n"
+                "  /clear        - 清空对话历史\n"
+                "  /config       - 查看当前配置信息\n"
+                "  /tools        - 列出所有已注册工具\n"
+                "  /skills       - 列出所有可用技能\n"
+                "  /skill <name> - 切换到指定技能\n"
+                "  /help         - 显示帮助"
+                "[/dim]"
+            )
             continue
         elif cmd == "/tools":
             for name, info in sorted(agent._tool_lookup.items()):
@@ -349,6 +380,42 @@ def run_repl(agent: Orchestrator) -> None:
                         )
                     )
             console.print(f"\n[dim]共 {len(agent._tool_lookup)} 个工具[/dim]")
+            console.print(Rule(style="dim"))
+            continue
+        elif cmd == "/skills":
+            skill_registry = load_skill_registry("./skills")
+            for s in skill_registry.list_skills():
+                active = (
+                    " [bold green]●[/bold green]"
+                    if (agent.get_active_skill() and agent.get_active_skill().name == s.name)
+                    else ""
+                )
+                console.print(
+                    Text.assemble(
+                        ("  ", ""),
+                        (f"{s.name:20s}", "bold"),
+                        (f"{s.description}", "dim"),
+                        (active, ""),
+                    )
+                )
+            console.print(Rule(style="dim"))
+            continue
+        elif cmd.startswith("/skill "):
+            name = user_input.strip()[7:].strip()
+            if not name:
+                console.print("[dim]用法: /skill <技能名>[/dim]")
+                continue
+            skill_registry = load_skill_registry("./skills")
+            skill = skill_registry.get(name)
+            if skill is None:
+                console.print(f"[bold red]未知技能: {name}[/bold red]")
+                available = ", ".join(skill_registry.list_names())
+                console.print(f"[dim]可用技能: {available}[/dim]")
+                continue
+            agent.set_skill(skill)
+            console.print(
+                f"[dim]已切换到技能: {skill.name} - {skill.description}[/dim]"
+            )
             console.print(Rule(style="dim"))
             continue
         elif cmd == "/config":
@@ -378,10 +445,13 @@ def run_repl(agent: Orchestrator) -> None:
 @click.option(
     "--plugins-dir", default="./plugins", help="插件目录路径"
 )
-def chat(system_prompt, mcp_servers, mcp_config, plugins_dir):
+@click.option(
+    "--skill", "skill_name", default=None, help="激活指定技能"
+)
+def chat(system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name):
     """启动交互式对话。"""
     load_dotenv()
-    agent = create_orchestrator(system_prompt, mcp_servers, mcp_config, plugins_dir)
+    agent = create_orchestrator(system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name)
     try:
         run_repl(agent)
     finally:
@@ -404,10 +474,13 @@ def chat(system_prompt, mcp_servers, mcp_config, plugins_dir):
 @click.option(
     "--plugins-dir", default="./plugins", help="插件目录路径"
 )
-def run(prompt, system_prompt, mcp_servers, mcp_config, plugins_dir):
+@click.option(
+    "--skill", "skill_name", default=None, help="激活指定技能"
+)
+def run(prompt, system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name):
     """单次执行一个问题。"""
     load_dotenv()
-    agent = create_orchestrator(system_prompt, mcp_servers, mcp_config, plugins_dir)
+    agent = create_orchestrator(system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name)
     try:
         _handle_events(agent, prompt)
     finally:
@@ -429,10 +502,13 @@ def run(prompt, system_prompt, mcp_servers, mcp_config, plugins_dir):
 @click.option(
     "--plugins-dir", default="./plugins", help="插件目录路径"
 )
-def config(system_prompt, mcp_servers, mcp_config, plugins_dir):
+@click.option(
+    "--skill", "skill_name", default=None, help="激活指定技能"
+)
+def config(system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name):
     """查看当前 Agent 配置信息（不启动对话）。"""
     load_dotenv()
-    agent = create_orchestrator(system_prompt, mcp_servers, mcp_config, plugins_dir)
+    agent = create_orchestrator(system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name)
     try:
         _print_config(agent)
     finally:
