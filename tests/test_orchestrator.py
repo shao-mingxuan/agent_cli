@@ -265,9 +265,16 @@ class TestRunStreamEvents:
             make_update_chunk({"model": {"messages": [AIMessage(content="你是笨蛋")]}}),
         ]
         orch, _ = make_orchestrator(script=script)
+        before_count = len(orch.memory.get_messages())
         events = list(orch.run_stream("hi"))
         respond_event = events[-1]
         assert "已拦截" in respond_event.content
+        # TOCTOU 修复验证：memory 中原始违规内容被回滚，保留 human + 拦截消息
+        msgs = orch.memory.get_messages()
+        assert len(msgs) == before_count + 2  # human msg + intercept msg
+        assert "已拦截" in msgs[-1].content
+        contents = [m.content for m in msgs]
+        assert "你是笨蛋" not in contents
 
 
 # ── run() 非流式 ──

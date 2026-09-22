@@ -19,16 +19,36 @@ MAX_TOOL_FAILURES = 3
 _TOOL_ERROR_MARKERS = ("error", "mcp error", "exception", "traceback", "failed")
 
 # 敏感工具关键词：匹配工具名或分类，命中则触发人工审批
-_SENSITIVE_KEYWORDS = (
-    "file", "write", "delete", "remove", "create", "mkdir", "rmdir",
-    "shell", "exec", "bash", "sh", "command", "run", "spawn",
-    "sql", "database", "db", "insert", "update", "drop",
-    "code", "edit", "modify", "patch", "git", "commit", "push", "pull",
-    "fs", "filesystem", "read_file", "write_file", "edit_file",
-    "read_directory", "list_directory", "search_files", "fs_",
+# 敏感工具关键词 —— 按匹配策略分为两类：
+#
+# 1. _SENSITIVE_WORDS：按单词匹配（以下划线或空白分隔）。
+#    避免短关键词在子串中误匹配（如 "sh" 命中 "push"、"db" 命中 "adblock"）。
+# 2. _SENSITIVE_PATTERNS：按子串匹配，仅包含长度 >=5 的特定完整词组，
+#    因长度足够，几乎不会产生误匹配。
+_SENSITIVE_WORDS: set[str] = {
+    # 执行类
+    "shell", "exec", "bash", "spawn", "command", "run",
+    # 数据库类
+    "sql", "database", "db",
+    "insert", "update", "drop",
+    # 文件系统 — 写/删/改
+    "write", "delete", "remove", "create", "mkdir", "rmdir",
+    "edit", "modify", "patch",
     "move", "copy", "rename", "chmod", "chown",
-    "query", "search", "local", "path",
-)
+    # 文件/目录 — 读操作也视为敏感（可读取密钥等）
+    "file", "directory",
+    # 版本控制
+    "git", "commit", "push", "pull",
+    # 其它
+    "fs",
+}
+
+_SENSITIVE_PATTERNS: set[str] = {
+    "filesystem",
+    "read_file", "write_file", "edit_file",
+    "read_directory", "list_directory", "search_files",
+    "fs_",
+}
 
 
 def _is_tool_error(content: str) -> bool:
@@ -144,12 +164,26 @@ class Orchestrator:
     def _is_sensitive_tool(self, tool_call: dict) -> bool:
         """判断工具调用是否为敏感操作（需要人工审批）。
 
-        匹配工具名和分类中的关键词，命中即视为敏感。
+        匹配策略：
+        1. 单词匹配（以下划线或空白分隔）——防止短关键词在子串中误匹配
+           例如 "sh" 不再命中 "push"，"db" 不再命中 "adblock"。
+        2. 子串匹配 —— 仅对长度 >=5 的特定完整词组生效。
         """
         name = tool_call.get("name", "").lower()
         category = tool_call.get("category", "").lower()
         combined = f"{name} {category}"
-        return any(kw in combined for kw in _SENSITIVE_KEYWORDS)
+
+        # 1. 单词匹配（按 _ 或空白切分）
+        words = set(combined.replace("_", " ").split())
+        if words & _SENSITIVE_WORDS:
+            return True
+
+        # 2. 子串匹配（仅长词组，避免误匹配）
+        for pattern in _SENSITIVE_PATTERNS:
+            if pattern in combined:
+                return True
+
+        return False
 
     @staticmethod
     def _builtin_approval_callback(tool_calls: list[dict]) -> list[bool]:
@@ -297,6 +331,8 @@ class Orchestrator:
         consecutive_failures = 0
         aborted = False
         stream_input = inputs
+        # TOCTOU 修复：记录本轮开始前的 memory 长度，blocked 时回滚
+        _memory_len_before = len(self.memory.get_messages())
 
         while True:
             interrupted = False
@@ -515,7 +551,11 @@ class Orchestrator:
             )
 
         if post_guard.blocked:
+            # TOCTOU 修复：回滚本轮写入 memory 的所有消息，避免不安全内容残留
+            if len(self.memory.get_messages()) > _memory_len_before:
+                self.memory.rollback_to(_memory_len_before)
             full_response = f"[回复已拦截] 检测到安全风险：{post_guard.message}"
+            self.memory.add_ai(full_response)
 
         yield AgentEvent(
             step=StepType.RESPOND,

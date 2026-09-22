@@ -2,7 +2,8 @@
 from agent_cli.agent.orchestrator import (
     MAX_TOOL_FAILURES,
     _TOOL_ERROR_MARKERS,
-    _SENSITIVE_KEYWORDS,
+    _SENSITIVE_WORDS,
+    _SENSITIVE_PATTERNS,
     _is_tool_error,
     Orchestrator,
 )
@@ -73,13 +74,52 @@ class TestIsSensitiveTool:
         assert _check_sensitive({"name": "", "category": ""}) is False
 
     def test_combined_name_and_category(self):
-        assert _check_sensitive({"name": "search", "category": "local"}) is True
+        # "search" 和 "local" 已从敏感词中移除（过于宽泛）
+        assert _check_sensitive({"name": "search", "category": "local"}) is False
 
-    def test_substring_match_sh_in_push(self):
+    def test_word_match_no_false_positive_sh(self):
+        # "sh" 被移除，不再在子串中误匹配
+        # "push" 仍匹配是因为 "push" 本身在敏感词中（git push），不是 "sh" 的误匹配
+        assert _check_sensitive({"name": "hash"}) is False
+        assert _check_sensitive({"name": "flash"}) is False
+        assert _check_sensitive({"name": "finish"}) is False
+
+    def test_word_match_no_false_positive_db(self):
+        # "db" 改为单词匹配，不再在子串中误匹配
+        assert _check_sensitive({"name": "adblock"}) is False
+        assert _check_sensitive({"name": "debug"}) is False
+
+    def test_word_match_db_in_query_db(self):
+        # "db" 作为独立单词仍应匹配
+        assert _check_sensitive({"name": "query_db"}) is True
+
+    def test_word_match_shell_in_execute_shell(self):
+        assert _check_sensitive({"name": "execute_shell"}) is True
+
+    def test_word_match_file_in_read_file(self):
+        assert _check_sensitive({"name": "read_file"}) is True
+
+    def test_pattern_match_read_file(self):
+        assert _check_sensitive({"name": "read_file"}) is True
+
+    def test_pattern_match_fs_prefix(self):
+        assert _check_sensitive({"name": "fs_list"}) is True
+
+    def test_no_false_positive_code(self):
+        # "code" 被移除，不再匹配 encode/decode/barcode
+        assert _check_sensitive({"name": "encode"}) is False
+        assert _check_sensitive({"name": "decode"}) is False
+        assert _check_sensitive({"name": "barcode"}) is False
+
+    def test_no_false_positive_run(self):
+        # "run" 改为单词匹配，不再在子串中误匹配
+        assert _check_sensitive({"name": "runtime"}) is False
+        assert _check_sensitive({"name": "runner"}) is False
+
+    def test_exact_word_push_still_matches(self):
+        # "push" 作为独立单词仍应匹配（git push）
+        assert _check_sensitive({"name": "git_push"}) is True
         assert _check_sensitive({"name": "push"}) is True
-
-    def test_substring_match_db_in_adblock(self):
-        assert _check_sensitive({"name": "adblock"}) is True
 
 
 class TestBuiltinApprovalCallback:
@@ -114,7 +154,12 @@ class TestConstants:
         assert "exception" in _TOOL_ERROR_MARKERS
         assert len(_TOOL_ERROR_MARKERS) >= 4
 
-    def test_sensitive_keywords_not_empty(self):
-        assert "file" in _SENSITIVE_KEYWORDS
-        assert "shell" in _SENSITIVE_KEYWORDS
-        assert len(_SENSITIVE_KEYWORDS) >= 20
+    def test_sensitive_words_not_empty(self):
+        assert "file" in _SENSITIVE_WORDS
+        assert "shell" in _SENSITIVE_WORDS
+        assert len(_SENSITIVE_WORDS) >= 15
+
+    def test_sensitive_patterns_not_empty(self):
+        assert "read_file" in _SENSITIVE_PATTERNS
+        assert "fs_" in _SENSITIVE_PATTERNS
+        assert len(_SENSITIVE_PATTERNS) >= 3

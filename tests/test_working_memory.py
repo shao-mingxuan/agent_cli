@@ -75,3 +75,32 @@ class TestWorkingMemory:
     def test_clear_returns_none(self):
         mem = WorkingMemory()
         assert mem.clear() is None
+
+    def test_rollback_to_discards_newer_messages(self):
+        mem = WorkingMemory()
+        mem.add_human("h1")
+        mem.add_ai("a1")
+        mem.add_human("h2")
+        mem.rollback_to(2)
+        msgs = mem.get_messages()
+        assert len(msgs) == 2
+        assert [m.content for m in msgs] == ["h1", "a1"]
+
+    def test_rollback_to_noop_when_n_equals_current(self):
+        mem = WorkingMemory()
+        mem.add_human("h1")
+        mem.rollback_to(1)
+        assert len(mem.get_messages()) == 1
+
+    def test_rollback_to_noop_when_n_greater_than_current(self):
+        mem = WorkingMemory()
+        mem.add_human("h1")
+        mem.rollback_to(5)
+        assert len(mem.get_messages()) == 1
+
+    def test_rollback_to_zero_clears(self):
+        mem = WorkingMemory()
+        mem.add_human("h1")
+        mem.add_ai("a1")
+        mem.rollback_to(0)
+        assert mem.get_messages() == []

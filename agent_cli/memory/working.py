@@ -23,5 +23,10 @@ class WorkingMemory:
     def get_messages(self) -> list[BaseMessage]:
         return list(self._messages)
 
+    def rollback_to(self, n: int) -> None:
+        """回滚消息列表到长度 n，丢弃后面的消息。"""
+        if len(self._messages) > n:
+            del self._messages[n:]
+
     def clear(self) -> None:
         self._messages.clear()
