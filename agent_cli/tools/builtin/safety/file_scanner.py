@@ -1,10 +1,10 @@
 """L3 工具 - 文件隐私/敏感信息扫描。"""
+
 import os
 
 from langchain.tools import tool
 
 from .backend import get_backend
-
 
 _MAX_FILE_SIZE = 1024 * 1024
 

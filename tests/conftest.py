@@ -1,11 +1,13 @@
 """共享 pytest fixtures。"""
-import pytest
+
 from unittest.mock import MagicMock
+
+import pytest
 
 from agent_cli.tools.builtin.safety.backend import (
     LocalSafetyBackend,
-    set_backend,
     get_backend,
+    set_backend,
 )
 
 
@@ -55,9 +57,7 @@ class FakeAgent:
 
     def __init__(self, script=None, state_values=None):
         self._script = list(script or [])
-        self._messages = list(
-            (state_values or {}).get("messages", [])
-        )
+        self._messages = list((state_values or {}).get("messages", []))
         self.stream_calls = []
         self.update_state_calls = []
 

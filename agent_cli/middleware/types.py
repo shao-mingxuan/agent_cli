@@ -1,6 +1,7 @@
 """L6 中间件 - AgentMiddleware 接口。"""
+
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Protocol
 
 
 @dataclass

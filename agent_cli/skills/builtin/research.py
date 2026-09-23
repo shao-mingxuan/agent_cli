@@ -1,4 +1,5 @@
 """L3 技能 - 深度研究。"""
+
 from ..define_skill import Skill
 
 RESEARCH_PROMPT = """\

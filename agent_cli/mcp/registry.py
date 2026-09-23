@@ -1,7 +1,8 @@
 """L3 MCP 注册中心 - 管理多个 MCP server 连接。"""
+
 from ..tools.registry import ToolInfo
-from .client import MCPClient, MCPServerConfig
 from .adapters.to_tool import MCPToolAdapter
+from .client import MCPClient, MCPServerConfig
 
 
 class MCPRegistry:
@@ -21,6 +22,7 @@ class MCPRegistry:
             client.connect()
         except Exception as e:
             from rich.console import Console
+
             Console().print(
                 f"[dim][MCP] 连接 '{config.name}' 失败 ({config.transport}): {e}[/dim]"
             )
@@ -32,9 +34,8 @@ class MCPRegistry:
             mcp_tools = client.list_tools_sync()
         except Exception as e:
             from rich.console import Console
-            Console().print(
-                f"[dim][MCP] '{config.name}' 工具列表获取失败: {e}[/dim]"
-            )
+
+            Console().print(f"[dim][MCP] '{config.name}' 工具列表获取失败: {e}[/dim]")
             return 0
 
         count = 0

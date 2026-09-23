@@ -1,4 +1,5 @@
 """L4 记忆 - 当前会话（内存）。"""
+
 from typing import Callable
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
@@ -92,6 +93,7 @@ class WorkingMemory:
         if self._encoder is None:
             try:
                 import tiktoken
+
                 self._encoder = tiktoken.encoding_for_model("gpt-4")
             except Exception:
                 self._encoder = False
@@ -146,11 +148,13 @@ class WorkingMemory:
 
         # 分离：保留的 system prompt、旧摘要（可压缩）、普通消息
         system_msgs = [
-            m for m in self._messages
+            m
+            for m in self._messages
             if isinstance(m, SystemMessage) and "[历史摘要]" not in m.content
         ]
         old_summaries = [
-            m for m in self._messages
+            m
+            for m in self._messages
             if isinstance(m, SystemMessage) and "[历史摘要]" in m.content
         ]
         other_msgs = [m for m in self._messages if not isinstance(m, SystemMessage)]

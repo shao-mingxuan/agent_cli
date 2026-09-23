@@ -1,6 +1,7 @@
 """L6 MiddlewarePipeline 测试。"""
-from agent_cli.middleware.types import GuardResult
+
 from agent_cli.middleware.pipeline import MiddlewarePipeline, create_default_pipeline
+from agent_cli.middleware.types import GuardResult
 
 
 class FakeMiddleware:

@@ -1,4 +1,5 @@
 """L3 SkillRegistry + define_skill 测试。"""
+
 from agent_cli.skills.define_skill import Skill, define_skill
 from agent_cli.skills.registry import SkillRegistry, create_default_registry
 
@@ -12,7 +13,9 @@ class TestSkill:
 
     def test_with_all_fields(self):
         s = Skill(
-            name="t", description="d", system_prompt="p",
+            name="t",
+            description="d",
+            system_prompt="p",
             tool_allowlist=["a", "b"],
             preprocess=lambda x: x,
             postprocess=lambda x: x,
@@ -23,7 +26,10 @@ class TestSkill:
 
     def test_is_dataclass(self):
         import dataclasses
-        assert dataclasses.is_dataclass(Skill(name="t", description="d", system_prompt="p"))
+
+        assert dataclasses.is_dataclass(
+            Skill(name="t", description="d", system_prompt="p")
+        )
 
 
 class TestSkillRegistry:
@@ -98,6 +104,7 @@ class TestDefineSkill:
         @define_skill("t", "d", "p")
         def my_skill():
             pass
+
         assert isinstance(my_skill, Skill)
         assert my_skill.name == "t"
         assert my_skill.description == "d"
@@ -106,6 +113,7 @@ class TestDefineSkill:
     def test_inherits_preprocess_postprocess(self):
         def my_func():
             pass
+
         my_func.preprocess = lambda x: x.upper()
         my_func.postprocess = lambda x: x.strip()
         skill = define_skill("t", "d", "p")(my_func)
@@ -116,6 +124,7 @@ class TestDefineSkill:
         @define_skill("t", "d", "p")
         def my_skill():
             pass
+
         assert my_skill.preprocess is None
         assert my_skill.postprocess is None
 
@@ -123,4 +132,5 @@ class TestDefineSkill:
         @define_skill("t", "d", "p", tool_allowlist=["a"])
         def my_skill():
             pass
+
         assert my_skill.tool_allowlist == ["a"]

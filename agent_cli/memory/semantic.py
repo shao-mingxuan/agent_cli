@@ -1,4 +1,5 @@
 """L4 记忆 - 向量记忆（SQLite + Embedding 检索）。"""
+
 import json
 import math
 import sqlite3
@@ -70,11 +71,13 @@ class SemanticMemory:
             emb = json.loads(row["embedding"])
             score = _cosine_similarity(query_emb, emb)
             if score >= self._similarity_threshold:
-                scored.append({
-                    "content": row["content"],
-                    "source": row["source"],
-                    "score": score,
-                })
+                scored.append(
+                    {
+                        "content": row["content"],
+                        "source": row["source"],
+                        "score": score,
+                    }
+                )
 
         scored.sort(key=lambda x: x["score"], reverse=True)
         k = top_k or self._top_k
@@ -95,11 +98,13 @@ class SemanticMemory:
             content_lower = row["content"].lower()
             matches = sum(1 for kw in keywords if kw in content_lower)
             if matches > 0:
-                scored.append({
-                    "content": row["content"],
-                    "source": row["source"],
-                    "score": float(matches),
-                })
+                scored.append(
+                    {
+                        "content": row["content"],
+                        "source": row["source"],
+                        "score": float(matches),
+                    }
+                )
 
         scored.sort(key=lambda x: x["score"], reverse=True)
         k = top_k or self._top_k
@@ -115,9 +120,7 @@ class SemanticMemory:
 
     def count(self) -> int:
         """返回已存储的事实总数。"""
-        row = self._conn.execute(
-            "SELECT COUNT(*) FROM semantic_memory"
-        ).fetchone()
+        row = self._conn.execute("SELECT COUNT(*) FROM semantic_memory").fetchone()
         return row[0] if row else 0
 
 

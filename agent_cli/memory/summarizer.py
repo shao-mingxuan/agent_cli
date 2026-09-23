@@ -1,4 +1,5 @@
 """L4 记忆 - 摘要器：将 LLM model 包装为 summarizer 回调。"""
+
 from typing import Callable
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -19,11 +20,18 @@ def create_llm_summarizer(model) -> Callable[[str], str]:
     Returns:
         summarizer 回调函数，输入对话文本，返回摘要文本。
     """
+
     def _summarize(text: str) -> str:
-        response = model.invoke([
-            SystemMessage(content=SUMMARY_SYSTEM_PROMPT),
-            HumanMessage(content=text),
-        ])
-        return response.content if isinstance(response.content, str) else str(response.content)
+        response = model.invoke(
+            [
+                SystemMessage(content=SUMMARY_SYSTEM_PROMPT),
+                HumanMessage(content=text),
+            ]
+        )
+        return (
+            response.content
+            if isinstance(response.content, str)
+            else str(response.content)
+        )
 
     return _summarize

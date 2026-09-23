@@ -1,4 +1,5 @@
 """L6 工具 - 日志。"""
+
 import logging
 import sys
 

@@ -1,4 +1,5 @@
 """L5 模型客户端 - OpenAI 兼容接口（星火等走这个）。"""
+
 import os
 from typing import Callable
 

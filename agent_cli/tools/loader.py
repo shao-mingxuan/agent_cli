@@ -1,8 +1,8 @@
 """L3 工具 - Python 插件加载器。"""
+
 import importlib.util
 import os
 import sys
-from typing import Any
 
 from langchain_core.tools import BaseTool
 

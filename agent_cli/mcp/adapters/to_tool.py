@@ -1,4 +1,5 @@
 """L3 MCP 适配器 - 将 MCP Tool 转为 LangChain BaseTool。"""
+
 from typing import Any, Type, Union
 
 from langchain_core.tools import BaseTool
@@ -37,9 +38,7 @@ def _json_type_to_python(
     return base
 
 
-def _schema_node_to_python(
-    node: dict, model_name: str = "NestedModel"
-) -> type:
+def _schema_node_to_python(node: dict, model_name: str = "NestedModel") -> type:
     """将一个 JSON Schema 节点（可能是 $ref / enum / oneOf / allOf / 嵌套）映射为 Python 类型。
 
     返回的 type 可以直接用于 pydantic Field 注解。
@@ -51,6 +50,7 @@ def _schema_node_to_python(
     enum_values = node.get("enum")
     if enum_values is not None:
         from typing import Literal
+
         return Literal[tuple(enum_values)]
 
     # anyOf / oneOf → Union
@@ -87,11 +87,14 @@ def _schema_node_to_python(
     if json_type is None:
         if "enum" in node:
             from typing import Literal
+
             return Literal[tuple(node["enum"])]
         return str
 
     if isinstance(json_type, list):
-        types = [_json_type_to_python(t, node, model_name) for t in json_type if t != "null"]
+        types = [
+            _json_type_to_python(t, node, model_name) for t in json_type if t != "null"
+        ]
         has_null = "null" in json_type
         if not types:
             return type(None)

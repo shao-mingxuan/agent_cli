@@ -1,6 +1,8 @@
 """L4 SQLite 存储层测试。"""
+
 import sqlite3
-from agent_cli.memory.store import get_connection, SCHEMA_SQL, DEFAULT_DB_PATH
+
+from agent_cli.memory.store import DEFAULT_DB_PATH, SCHEMA_SQL, get_connection
 
 
 class TestGetConnection:

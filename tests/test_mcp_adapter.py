@@ -1,17 +1,17 @@
 """L3 MCP 适配器测试 - JSON Schema→Pydantic 转换 + MCPToolAdapter。"""
+
 import asyncio
 from types import SimpleNamespace
-from typing import get_args, get_origin, Union, Literal
+from typing import Literal, Union, get_args, get_origin
 
-import pytest
 from pydantic import BaseModel
 
 from agent_cli.mcp.adapters.to_tool import (
+    MCPToolAdapter,
+    _json_schema_to_pydantic,
     _json_type_to_python,
     _schema_node_to_python,
     _schema_to_pydantic_model,
-    _json_schema_to_pydantic,
-    MCPToolAdapter,
 )
 
 
@@ -52,17 +52,17 @@ class TestSchemaNodeToPython:
         assert get_args(result) == ("a", "b")
 
     def test_anyof_two_types(self):
-        result = _schema_node_to_python({
-            "anyOf": [{"type": "string"}, {"type": "integer"}]
-        })
+        result = _schema_node_to_python(
+            {"anyOf": [{"type": "string"}, {"type": "integer"}]}
+        )
         assert get_origin(result) is Union
         assert str in get_args(result)
         assert int in get_args(result)
 
     def test_oneof_two_types(self):
-        result = _schema_node_to_python({
-            "oneOf": [{"type": "string"}, {"type": "null"}]
-        })
+        result = _schema_node_to_python(
+            {"oneOf": [{"type": "string"}, {"type": "null"}]}
+        )
         assert get_origin(result) is Union
 
     def test_anyof_single_type(self):
@@ -70,24 +70,20 @@ class TestSchemaNodeToPython:
         assert result is str
 
     def test_allof_merges_properties(self):
-        result = _schema_node_to_python({
-            "allOf": [{"properties": {"a": {"type": "string"}}}]
-        })
+        result = _schema_node_to_python(
+            {"allOf": [{"properties": {"a": {"type": "string"}}}]}
+        )
         assert result is not None
 
     def test_nested_object(self):
-        result = _schema_node_to_python({
-            "type": "object",
-            "properties": {"x": {"type": "string"}}
-        })
+        result = _schema_node_to_python(
+            {"type": "object", "properties": {"x": {"type": "string"}}}
+        )
         assert isinstance(result, type)
         assert issubclass(result, BaseModel)
 
     def test_array_with_items(self):
-        result = _schema_node_to_python({
-            "type": "array",
-            "items": {"type": "string"}
-        })
+        result = _schema_node_to_python({"type": "array", "items": {"type": "string"}})
         assert result == list[str]
 
     def test_type_array_optional(self):
@@ -115,21 +111,22 @@ class TestSchemaNodeToPython:
 
 class TestSchemaToPydanticModel:
     def test_with_required_field(self):
-        model = _schema_to_pydantic_model({
-            "type": "object",
-            "properties": {"name": {"type": "string"}},
-            "required": ["name"]
-        })
+        model = _schema_to_pydantic_model(
+            {
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"],
+            }
+        )
         assert model is not None
         assert issubclass(model, BaseModel)
         instance = model(name="test")
         assert instance.name == "test"
 
     def test_with_optional_field(self):
-        model = _schema_to_pydantic_model({
-            "type": "object",
-            "properties": {"age": {"type": "integer"}}
-        })
+        model = _schema_to_pydantic_model(
+            {"type": "object", "properties": {"age": {"type": "integer"}}}
+        )
         assert model is not None
         instance = model()
         assert instance.age is None
@@ -145,11 +142,13 @@ class TestSchemaToPydanticModel:
 
 class TestJsonSchemaToPydantic:
     def test_with_properties(self):
-        model = _json_schema_to_pydantic({
-            "type": "object",
-            "properties": {"q": {"type": "string"}},
-            "required": ["q"]
-        })
+        model = _json_schema_to_pydantic(
+            {
+                "type": "object",
+                "properties": {"q": {"type": "string"}},
+                "required": ["q"],
+            }
+        )
         assert issubclass(model, BaseModel)
         instance = model(q="hello")
         assert instance.q == "hello"
@@ -162,7 +161,9 @@ class TestJsonSchemaToPydantic:
 
 
 class TestMCPToolAdapter:
-    def _make_mock_tool(self, name="get_weather", description="Get weather", schema=None):
+    def _make_mock_tool(
+        self, name="get_weather", description="Get weather", schema=None
+    ):
         return SimpleNamespace(
             name=name,
             description=description,

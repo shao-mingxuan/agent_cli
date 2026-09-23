@@ -1,4 +1,5 @@
 """L3 技能 - 文档摘要。"""
+
 from ..define_skill import Skill
 
 SUMMARIZE_PROMPT = """\

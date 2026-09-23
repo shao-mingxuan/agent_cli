@@ -1,13 +1,14 @@
 """L3 MCP Client 测试 - 配置解析 + 客户端状态。"""
+
 import json
 
 import pytest
 
 from agent_cli.mcp.client import (
-    MCPServerConfig,
     MCPClient,
-    parse_mcp_server_spec,
+    MCPServerConfig,
     load_mcp_servers_from_config,
+    parse_mcp_server_spec,
 )
 
 
@@ -64,15 +65,19 @@ class TestParseMcpServerSpec:
 class TestLoadMcpServersFromConfig:
     def test_valid_stdio(self, tmp_path):
         f = tmp_path / "mcp.json"
-        f.write_text(json.dumps({
-            "mcpServers": {
-                "weather": {
-                    "command": "python",
-                    "args": ["server.py"],
-                    "transport": "stdio"
+        f.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "weather": {
+                            "command": "python",
+                            "args": ["server.py"],
+                            "transport": "stdio",
+                        }
+                    }
                 }
-            }
-        }))
+            )
+        )
         configs = load_mcp_servers_from_config(str(f))
         assert len(configs) == 1
         assert configs[0].name == "weather"
@@ -81,26 +86,31 @@ class TestLoadMcpServersFromConfig:
 
     def test_valid_sse(self, tmp_path):
         f = tmp_path / "mcp.json"
-        f.write_text(json.dumps({
-            "mcpServers": {
-                "remote": {
-                    "url": "http://example.com/sse",
-                    "transport": "sse"
+        f.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "remote": {"url": "http://example.com/sse", "transport": "sse"}
+                    }
                 }
-            }
-        }))
+            )
+        )
         configs = load_mcp_servers_from_config(str(f))
         assert len(configs) == 1
         assert configs[0].url == "http://example.com/sse"
 
     def test_multiple_servers(self, tmp_path):
         f = tmp_path / "mcp.json"
-        f.write_text(json.dumps({
-            "mcpServers": {
-                "weather": {"command": "python", "transport": "stdio"},
-                "remote": {"url": "http://x.com/sse", "transport": "sse"}
-            }
-        }))
+        f.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "weather": {"command": "python", "transport": "stdio"},
+                        "remote": {"url": "http://x.com/sse", "transport": "sse"},
+                    }
+                }
+            )
+        )
         configs = load_mcp_servers_from_config(str(f))
         assert len(configs) == 2
 
@@ -134,27 +144,25 @@ class TestLoadMcpServersFromConfig:
 
     def test_default_transport_is_stdio(self, tmp_path):
         f = tmp_path / "mcp.json"
-        f.write_text(json.dumps({
-            "mcpServers": {"x": {"command": "python"}}
-        }))
+        f.write_text(json.dumps({"mcpServers": {"x": {"command": "python"}}}))
         configs = load_mcp_servers_from_config(str(f))
         assert configs[0].transport == "stdio"
 
     def test_invalid_transport(self, tmp_path):
         f = tmp_path / "mcp.json"
-        f.write_text(json.dumps({
-            "mcpServers": {"x": {"transport": "ftp", "command": "y"}}
-        }))
+        f.write_text(
+            json.dumps({"mcpServers": {"x": {"transport": "ftp", "command": "y"}}})
+        )
         with pytest.raises(ValueError):
             load_mcp_servers_from_config(str(f))
 
     def test_with_env(self, tmp_path):
         f = tmp_path / "mcp.json"
-        f.write_text(json.dumps({
-            "mcpServers": {
-                "x": {"command": "python", "env": {"DEBUG": "true"}}
-            }
-        }))
+        f.write_text(
+            json.dumps(
+                {"mcpServers": {"x": {"command": "python", "env": {"DEBUG": "true"}}}}
+            )
+        )
         configs = load_mcp_servers_from_config(str(f))
         assert configs[0].env == {"DEBUG": "true"}
 
@@ -175,7 +183,9 @@ class TestMCPClientState:
         c.disconnect()
 
     def test_build_target_stdio(self):
-        c = MCPClient(MCPServerConfig(name="t", transport="stdio", command="python", args=["a"]))
+        c = MCPClient(
+            MCPServerConfig(name="t", transport="stdio", command="python", args=["a"])
+        )
         target = c._build_target()
         assert target is not None
         assert target.command == "python"

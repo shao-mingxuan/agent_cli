@@ -1,4 +1,5 @@
 """L3 工具 - 违规词/敏感内容检测。"""
+
 from langchain.tools import tool
 
 from .backend import get_backend

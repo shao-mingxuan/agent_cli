@@ -1,5 +1,5 @@
-
 """L1 编排核心 - AgentState, AgentEvent 类型定义。"""
+
 from dataclasses import dataclass, field
 from typing import Any
 

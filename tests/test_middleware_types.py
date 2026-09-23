@@ -1,5 +1,6 @@
 """L6 中间件类型测试。"""
-from agent_cli.middleware.types import GuardResult, AgentMiddleware
+
+from agent_cli.middleware.types import GuardResult
 
 
 class TestGuardResult:

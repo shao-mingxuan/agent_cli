@@ -1,13 +1,14 @@
 """L1 Orchestrator 集成测试 (FakeAgent + mock create_agent)。"""
-import asyncio
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
 
-import pytest
-from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage, HumanMessage, SystemMessage
+from unittest.mock import MagicMock
 
-from agent_cli.agent.orchestrator import Orchestrator
-from agent_cli.agent.types import AgentEvent, StepType
+from langchain_core.messages import AIMessage, AIMessageChunk, SystemMessage
+
+from agent_cli.agent.long_term_memory import (
+    inject_episodic_memory,
+    save_session,
+)
+from agent_cli.agent.types import StepType
 from agent_cli.memory.working import WorkingMemory
 from agent_cli.middleware.pipeline import MiddlewarePipeline
 from agent_cli.middleware.types import GuardResult
@@ -15,11 +16,10 @@ from agent_cli.skills.define_skill import Skill
 from agent_cli.tools.registry import ToolInfo
 from tests.conftest import (
     FakeAgent,
+    make_interrupt_chunk,
     make_msg_chunk,
     make_update_chunk,
-    make_interrupt_chunk,
 )
-
 
 # ── 构造器测试 ──
 
@@ -43,8 +43,10 @@ class TestConstructor:
 
     def test_with_skill_filters_tools(self, make_orchestrator):
         skill = Skill(
-            name="coder", description="d",
-            system_prompt="custom prompt", tool_allowlist=["calculate"],
+            name="coder",
+            description="d",
+            system_prompt="custom prompt",
+            tool_allowlist=["calculate"],
         )
         orch, _ = make_orchestrator(skill=skill)
         assert orch.system_prompt == "custom prompt"
@@ -82,7 +84,9 @@ class TestSetSkill:
 
     def test_filters_tools(self, make_orchestrator):
         orch, _ = make_orchestrator()
-        skill = Skill(name="s", description="d", system_prompt="p", tool_allowlist=["calculate"])
+        skill = Skill(
+            name="s", description="d", system_prompt="p", tool_allowlist=["calculate"]
+        )
         orch.set_skill(skill)
         assert len(orch.tools) == 1
 
@@ -139,7 +143,12 @@ class TestGetConfigInfo:
         assert info["skill"] is None
 
     def test_skill_info_with_skill(self, make_orchestrator):
-        skill = Skill(name="coder", description="code review", system_prompt="p", tool_allowlist=["calculate"])
+        skill = Skill(
+            name="coder",
+            description="code review",
+            system_prompt="p",
+            tool_allowlist=["calculate"],
+        )
         orch, _ = make_orchestrator(skill=skill)
         info = orch.get_config_info()
         assert info["skill"]["name"] == "coder"
@@ -265,7 +274,9 @@ class TestRunStreamEvents:
             make_update_chunk({"model": {"messages": [AIMessage(content="hi")]}}),
         ]
         skill = Skill(
-            name="test", description="d", system_prompt="p",
+            name="test",
+            description="d",
+            system_prompt="p",
             preprocess=lambda x: x.upper(),
         )
         orch, _ = make_orchestrator(script=script, skill=skill)
@@ -279,7 +290,9 @@ class TestRunStreamEvents:
             make_update_chunk({"model": {"messages": [AIMessage(content="raw")]}}),
         ]
         skill = Skill(
-            name="test", description="d", system_prompt="p",
+            name="test",
+            description="d",
+            system_prompt="p",
             postprocess=lambda x: f"[processed]{x}",
         )
         orch, _ = make_orchestrator(script=script, skill=skill)
@@ -289,12 +302,20 @@ class TestRunStreamEvents:
 
     def test_post_guard_warning(self, make_orchestrator):
         script = [
-            make_msg_chunk(AIMessageChunk(content="call 13812345678", id="run1"), "model"),
-            make_update_chunk({"model": {"messages": [AIMessage(content="call 13812345678")]}}),
+            make_msg_chunk(
+                AIMessageChunk(content="call 13812345678", id="run1"), "model"
+            ),
+            make_update_chunk(
+                {"model": {"messages": [AIMessage(content="call 13812345678")]}}
+            ),
         ]
         orch, _ = make_orchestrator(script=script)
         events = list(orch.run_stream("hi"))
-        post_guards = [e for e in events if e.step == StepType.GUARD and e.metadata.get("phase") == "post"]
+        post_guards = [
+            e
+            for e in events
+            if e.step == StepType.GUARD and e.metadata.get("phase") == "post"
+        ]
         assert len(post_guards) > 0
         assert post_guards[0].metadata["risk_level"] == "warning"
 
@@ -336,9 +357,15 @@ class TestRun:
 
 class TestApprovalWorkflow:
     def test_non_sensitive_tool_auto_pass(self, make_orchestrator):
-        tc = {"name": "calculate", "args": {"expression": "1+1"}, "id": "tc1", "type": "tool_call"}
+        tc = {
+            "name": "calculate",
+            "args": {"expression": "1+1"},
+            "id": "tc1",
+            "type": "tool_call",
+        }
         chunk_msg = AIMessageChunk(
-            content="", id="run1",
+            content="",
+            id="run1",
             tool_calls=[tc],
         )
         ai_msg = AIMessage(content="", tool_calls=[tc])
@@ -353,9 +380,15 @@ class TestApprovalWorkflow:
         assert len(approve_events) == 0
 
     def test_sensitive_tool_triggers_approve(self, make_orchestrator):
-        tc = {"name": "write_file", "args": {"path": "/x"}, "id": "tc1", "type": "tool_call"}
+        tc = {
+            "name": "write_file",
+            "args": {"path": "/x"},
+            "id": "tc1",
+            "type": "tool_call",
+        }
         chunk_msg = AIMessageChunk(
-            content="", id="run1",
+            content="",
+            id="run1",
             tool_calls=[tc],
         )
         ai_msg = AIMessage(content="", tool_calls=[tc])
@@ -371,9 +404,15 @@ class TestApprovalWorkflow:
         assert len(approve_events) > 0
 
     def test_rejected_tool_yields_rejected_act(self, make_orchestrator):
-        tc = {"name": "write_file", "args": {"path": "/x"}, "id": "tc1", "type": "tool_call"}
+        tc = {
+            "name": "write_file",
+            "args": {"path": "/x"},
+            "id": "tc1",
+            "type": "tool_call",
+        }
         chunk_msg = AIMessageChunk(
-            content="", id="run1",
+            content="",
+            id="run1",
             tool_calls=[tc],
         )
         ai_msg = AIMessage(content="", tool_calls=[tc])
@@ -385,13 +424,20 @@ class TestApprovalWorkflow:
         approval_callback = lambda tcs: [False]
         orch, _ = make_orchestrator(script=script, approval_callback=approval_callback)
         events = list(orch.run_stream("write a file"))
-        act_events = [e for e in events if e.step == StepType.ACT and e.metadata.get("rejected")]
+        act_events = [
+            e for e in events if e.step == StepType.ACT and e.metadata.get("rejected")
+        ]
         assert len(act_events) > 0
         assert act_events[0].content == "用户拒绝了此工具调用。"
 
     def test_three_rejections_abort(self, make_orchestrator):
         tc_id = "tc1"
-        tc = {"name": "write_file", "args": {"path": "/x"}, "id": tc_id, "type": "tool_call"}
+        tc = {
+            "name": "write_file",
+            "args": {"path": "/x"},
+            "id": tc_id,
+            "type": "tool_call",
+        }
         chunk_msg = AIMessageChunk(content="", id="run1", tool_calls=[tc])
         ai_msg = AIMessage(content="", tool_calls=[tc])
 
@@ -442,12 +488,19 @@ class TestApprovalWorkflow:
 
 class TestQuestionFallback:
     def test_question_breaks_immediately(self, make_orchestrator):
-        ai_msg = AIMessage(content="你想用哪个文件？", tool_calls=[
-            {"name": "write_file", "args": {}, "id": "tc1", "type": "tool_call"}
-        ])
-        chunk_msg = AIMessageChunk(content="你想用哪个文件？", id="run1", tool_calls=[
-            {"name": "write_file", "args": {}, "id": "tc1", "type": "tool_call"}
-        ])
+        ai_msg = AIMessage(
+            content="你想用哪个文件？",
+            tool_calls=[
+                {"name": "write_file", "args": {}, "id": "tc1", "type": "tool_call"}
+            ],
+        )
+        chunk_msg = AIMessageChunk(
+            content="你想用哪个文件？",
+            id="run1",
+            tool_calls=[
+                {"name": "write_file", "args": {}, "id": "tc1", "type": "tool_call"}
+            ],
+        )
         script = [
             make_msg_chunk(chunk_msg, "model"),
             make_update_chunk({"model": {"messages": [ai_msg]}}),
@@ -485,7 +538,7 @@ class TestLongTermMemory:
     def test_episodic_injected_with_data(self, make_orchestrator):
         orch, _ = make_orchestrator(enable_long_term_memory=True)
         orch._episodic_memory.save_session("prev", "之前的对话摘要")
-        orch._inject_episodic_memory()
+        inject_episodic_memory(orch)
         msgs = orch.memory.get_messages()
         assert len(msgs) == 1
         assert "[历史会话记忆]" in msgs[0].content
@@ -500,7 +553,8 @@ class TestLongTermMemory:
         events = list(orch.run_stream("python question"))
         msgs = orch.memory.get_messages()
         semantic_msgs = [
-            m for m in msgs
+            m
+            for m in msgs
             if isinstance(m, SystemMessage) and "[相关知识记忆]" in m.content
         ]
         assert len(semantic_msgs) == 1
@@ -518,7 +572,8 @@ class TestLongTermMemory:
         list(orch.run_stream("python again"))
         msgs = orch.memory.get_messages()
         semantic_count = sum(
-            1 for m in msgs
+            1
+            for m in msgs
             if isinstance(m, SystemMessage) and "[相关知识记忆]" in m.content
         )
         assert semantic_count == 1
@@ -539,13 +594,13 @@ class TestLongTermMemory:
         orch.memory.add_ai("hi there")
         orch.memory.add_human("how are you")
         orch.memory.add_ai("good")
-        orch._save_session()
+        save_session(orch)
         assert orch._episodic_memory.count() == 1
         orch.cleanup()
 
     def test_cleanup_no_save_short_conversation(self, make_orchestrator):
         orch, _ = make_orchestrator(enable_long_term_memory=True)
-        orch._save_session()
+        save_session(orch)
         assert orch._episodic_memory.count() == 0
         orch.cleanup()
 

@@ -1,27 +1,26 @@
 """L3 技能加载器测试。"""
+
 import sys
 
 from agent_cli.skills.loader import load_skill_modules, load_skill_registry
-from agent_cli.skills.define_skill import Skill
 
-
-SKILL_CODE = '''
+SKILL_CODE = """
 from agent_cli.skills.define_skill import Skill
 
 my_skill = Skill(name="my_skill", description="test", system_prompt="prompt")
-'''
+"""
 
-BAD_SKILL_CODE = '''
+BAD_SKILL_CODE = """
 import nonexistent_module_xyz
-'''
+"""
 
-NON_SKILL_CODE = '''
+NON_SKILL_CODE = """
 class SomeClass:
     pass
 
 def some_function():
     pass
-'''
+"""
 
 
 class TestLoadSkillModules:

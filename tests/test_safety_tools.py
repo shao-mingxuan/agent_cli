@@ -1,11 +1,9 @@
 """L3 安全工具测试 - @tool 包装的安全检测函数。"""
-import os
-from unittest.mock import patch
 
-from agent_cli.tools.builtin.safety.pii_detector import detect_pii
 from agent_cli.tools.builtin.safety.content_moderator import detect_violation
 from agent_cli.tools.builtin.safety.file_scanner import scan_file
 from agent_cli.tools.builtin.safety.input_validator import validate_input
+from agent_cli.tools.builtin.safety.pii_detector import detect_pii
 
 
 class TestDetectPiiTool:

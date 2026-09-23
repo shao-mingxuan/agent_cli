@@ -1,4 +1,5 @@
 """L6 中间件 - 双层安全检测中间件。"""
+
 from ...tools.builtin.safety.backend import get_backend
 from ..types import GuardResult
 

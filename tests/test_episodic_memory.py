@@ -1,6 +1,7 @@
 """L4 EpisodicMemory 测试。"""
-from agent_cli.memory.store import get_connection
+
 from agent_cli.memory.episodic import EpisodicMemory
+from agent_cli.memory.store import get_connection
 
 
 class TestEpisodicMemory:

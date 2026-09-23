@@ -1,4 +1,5 @@
 """L5 模型客户端 - Provider 抽象基类。"""
+
 from abc import ABC, abstractmethod
 from typing import Any, Callable
 

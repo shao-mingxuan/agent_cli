@@ -1,8 +1,8 @@
 """L3 插件加载器测试。"""
+
 import sys
 
 from agent_cli.tools.loader import load_plugins
-
 
 PLUGIN_CODE = '''
 from langchain.tools import tool
@@ -13,17 +13,17 @@ def my_tool(query: str) -> str:
     return f"result: {query}"
 '''
 
-BAD_PLUGIN_CODE = '''
+BAD_PLUGIN_CODE = """
 import nonexistent_module_xyz
-'''
+"""
 
-NON_TOOL_CODE = '''
+NON_TOOL_CODE = """
 def regular_function():
     return "not a tool"
 
 class SomeClass:
     pass
-'''
+"""
 
 
 class TestLoadPlugins:

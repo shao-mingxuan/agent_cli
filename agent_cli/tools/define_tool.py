@@ -1,4 +1,5 @@
 """L3 工具 - define_tool() 辅助函数。"""
+
 from langchain.tools import tool as _tool
 
 

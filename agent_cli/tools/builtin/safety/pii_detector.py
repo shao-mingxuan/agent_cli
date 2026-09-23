@@ -1,4 +1,5 @@
 """L3 工具 - PII 个人隐私信息检测。"""
+
 from langchain.tools import tool
 
 from .backend import get_backend

@@ -1,4 +1,5 @@
 """L3 工具 - 输入规范校验。"""
+
 from langchain.tools import tool
 
 from .backend import get_backend

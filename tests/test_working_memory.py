@@ -1,12 +1,11 @@
 """L4 WorkingMemory 测试。"""
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage, ToolMessage
+
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from agent_cli.memory.working import (
-    WorkingMemory,
     DEFAULT_MAX_MESSAGES,
     DEFAULT_MAX_TOKENS,
-    DEFAULT_COMPRESSION_THRESHOLD,
-    DEFAULT_KEEP_RECENT,
+    WorkingMemory,
 )
 
 
@@ -234,7 +233,14 @@ class TestTokenEstimation:
         mem = WorkingMemory()
         msg = AIMessage(
             content="",
-            tool_calls=[{"name": "write_file", "args": {"path": "/x"}, "id": "tc1", "type": "tool_call"}],
+            tool_calls=[
+                {
+                    "name": "write_file",
+                    "args": {"path": "/x"},
+                    "id": "tc1",
+                    "type": "tool_call",
+                }
+            ],
         )
         tokens = mem._estimate_tokens([msg])
         assert tokens > 0
@@ -249,10 +255,12 @@ class TestTokenEstimation:
 class TestSerializeMessages:
     def test_basic_serialization(self):
         mem = WorkingMemory()
-        text = mem._serialize_messages([
-            HumanMessage(content="hello"),
-            AIMessage(content="hi there"),
-        ])
+        text = mem._serialize_messages(
+            [
+                HumanMessage(content="hello"),
+                AIMessage(content="hi there"),
+            ]
+        )
         assert "Human: hello" in text
         assert "AI: hi there" in text
 
@@ -260,7 +268,14 @@ class TestSerializeMessages:
         mem = WorkingMemory()
         msg = AIMessage(
             content="",
-            tool_calls=[{"name": "write_file", "args": {"path": "/x"}, "id": "tc1", "type": "tool_call"}],
+            tool_calls=[
+                {
+                    "name": "write_file",
+                    "args": {"path": "/x"},
+                    "id": "tc1",
+                    "type": "tool_call",
+                }
+            ],
         )
         text = mem._serialize_messages([msg])
         assert "write_file" in text
@@ -285,9 +300,11 @@ class TestTokenCompression:
 
     def test_compress_triggers_on_token_overflow(self):
         calls = []
+
         def summarizer(text):
             calls.append(text)
             return "summary of conversation"
+
         mem = WorkingMemory(
             max_tokens=10,
             compression_threshold=3,
@@ -298,16 +315,22 @@ class TestTokenCompression:
             mem.add_human(f"long message number {i} with lots of tokens")
         msgs = mem.get_messages()
         assert len(calls) >= 1
-        summary_msgs = [m for m in msgs if isinstance(m, SystemMessage) and "[历史摘要]" in m.content]
+        summary_msgs = [
+            m
+            for m in msgs
+            if isinstance(m, SystemMessage) and "[历史摘要]" in m.content
+        ]
         assert len(summary_msgs) == 1
         non_system = [m for m in msgs if not isinstance(m, SystemMessage)]
         assert len(non_system) <= 2
 
     def test_no_compress_under_threshold(self):
         calls = []
+
         def summarizer(text):
             calls.append(text)
             return "summary"
+
         mem = WorkingMemory(
             max_tokens=1,
             compression_threshold=20,
@@ -320,9 +343,11 @@ class TestTokenCompression:
 
     def test_no_compress_under_token_limit(self):
         calls = []
+
         def summarizer(text):
             calls.append(text)
             return "summary"
+
         mem = WorkingMemory(
             max_tokens=10000,
             compression_threshold=2,
@@ -336,6 +361,7 @@ class TestTokenCompression:
     def test_summarizer_failure_skips_compress(self):
         def bad_summarizer(text):
             raise RuntimeError("LLM unavailable")
+
         mem = WorkingMemory(
             max_tokens=1,
             compression_threshold=3,
@@ -345,12 +371,17 @@ class TestTokenCompression:
         for i in range(5):
             mem.add_human(f"message {i}")
         msgs = mem.get_messages()
-        summary_msgs = [m for m in msgs if isinstance(m, SystemMessage) and "[历史摘要]" in m.content]
+        summary_msgs = [
+            m
+            for m in msgs
+            if isinstance(m, SystemMessage) and "[历史摘要]" in m.content
+        ]
         assert len(summary_msgs) == 0
 
     def test_keep_recent_preserves_latest(self):
         def summarizer(text):
             return "summary"
+
         mem = WorkingMemory(
             max_tokens=10,
             compression_threshold=3,
@@ -369,6 +400,7 @@ class TestTokenCompression:
     def test_system_message_retained_after_compress(self):
         def summarizer(text):
             return "summary"
+
         mem = WorkingMemory(
             max_tokens=10,
             compression_threshold=3,
@@ -383,9 +415,11 @@ class TestTokenCompression:
 
     def test_rolling_compression(self):
         calls = []
+
         def summarizer(text):
             calls.append(text)
             return f"summary #{len(calls)}"
+
         mem = WorkingMemory(
             max_tokens=10,
             compression_threshold=3,
@@ -396,14 +430,20 @@ class TestTokenCompression:
             mem.add_human(f"long message {i} " * 5)
         msgs = mem.get_messages()
         assert len(calls) >= 2
-        summary_msgs = [m for m in msgs if isinstance(m, SystemMessage) and "[历史摘要]" in m.content]
+        summary_msgs = [
+            m
+            for m in msgs
+            if isinstance(m, SystemMessage) and "[历史摘要]" in m.content
+        ]
         assert len(summary_msgs) == 1
 
     def test_too_few_to_compress_skips(self):
         calls = []
+
         def summarizer(text):
             calls.append(text)
             return "summary"
+
         mem = WorkingMemory(
             max_tokens=1,
             compression_threshold=3,

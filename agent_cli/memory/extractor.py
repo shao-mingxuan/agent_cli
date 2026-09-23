@@ -1,4 +1,5 @@
 """L4 记忆 - 事实提取器：从对话中提取可持久化的事实。"""
+
 from typing import Callable
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -21,21 +22,20 @@ def create_fact_extractor(model) -> Callable[[str], list[str]]:
     Returns:
         extractor 回调函数，输入对话文本，返回事实列表。
     """
+
     def _extract(text: str) -> list[str]:
-        response = model.invoke([
-            SystemMessage(content=FACT_EXTRACTION_PROMPT),
-            HumanMessage(content=text),
-        ])
+        response = model.invoke(
+            [
+                SystemMessage(content=FACT_EXTRACTION_PROMPT),
+                HumanMessage(content=text),
+            ]
+        )
         content = (
             response.content
             if isinstance(response.content, str)
             else str(response.content)
         )
-        facts = [
-            line.strip()
-            for line in content.strip().split("\n")
-            if line.strip()
-        ]
+        facts = [line.strip() for line in content.strip().split("\n") if line.strip()]
         return facts
 
     return _extract

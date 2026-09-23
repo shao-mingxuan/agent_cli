@@ -1,10 +1,10 @@
 """L3 MCPRegistry 测试。"""
-from types import SimpleNamespace
-from unittest.mock import patch, MagicMock
 
-from agent_cli.mcp.registry import MCPRegistry
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
 from agent_cli.mcp.client import MCPServerConfig
-from agent_cli.tools.registry import ToolInfo
+from agent_cli.mcp.registry import MCPRegistry
 
 
 def _make_mock_mcp_tool(name="get_weather", description="Get weather"):
@@ -48,7 +48,9 @@ class TestAddServer:
         )
 
         with patch("agent_cli.mcp.registry.MCPClient", return_value=mock_client):
-            count = reg.add_server(MCPServerConfig(name="srv", transport="stdio", command="x"))
+            count = reg.add_server(
+                MCPServerConfig(name="srv", transport="stdio", command="x")
+            )
 
         assert count == 2
         assert len(reg.get_tool_infos()) == 2
@@ -61,7 +63,9 @@ class TestAddServer:
         mock_client.connect = MagicMock(side_effect=ConnectionError("failed"))
 
         with patch("agent_cli.mcp.registry.MCPClient", return_value=mock_client):
-            count = reg.add_server(MCPServerConfig(name="srv", transport="stdio", command="x"))
+            count = reg.add_server(
+                MCPServerConfig(name="srv", transport="stdio", command="x")
+            )
 
         assert count == 0
         assert reg.get_tool_infos() == []
@@ -73,7 +77,9 @@ class TestAddServer:
         mock_client.list_tools_sync = MagicMock(side_effect=RuntimeError("failed"))
 
         with patch("agent_cli.mcp.registry.MCPClient", return_value=mock_client):
-            count = reg.add_server(MCPServerConfig(name="srv", transport="stdio", command="x"))
+            count = reg.add_server(
+                MCPServerConfig(name="srv", transport="stdio", command="x")
+            )
 
         assert count == 0
         assert reg.get_tool_infos() == []

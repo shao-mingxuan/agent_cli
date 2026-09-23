@@ -1,4 +1,5 @@
 """L3 ToolRegistry 测试。"""
+
 from agent_cli.tools.registry import ToolInfo, ToolRegistry, create_default_registry
 
 

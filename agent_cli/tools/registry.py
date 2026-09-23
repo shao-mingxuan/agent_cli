@@ -1,5 +1,6 @@
 """L3 工具 - 工具注册中心。"""
-from dataclasses import dataclass, field
+
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -19,9 +20,7 @@ class ToolRegistry:
     def __init__(self):
         self._entries: list[ToolInfo] = []
 
-    def register(
-        self, tool: Any, source: str = "builtin", category: str = ""
-    ) -> None:
+    def register(self, tool: Any, source: str = "builtin", category: str = "") -> None:
         name = getattr(tool, "name", getattr(tool, "__name__", str(tool)))
         self._entries.append(ToolInfo(tool, name, source, category))
 

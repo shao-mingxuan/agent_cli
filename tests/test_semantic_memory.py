@@ -1,6 +1,7 @@
 """L4 SemanticMemory 测试。"""
-from agent_cli.memory.store import get_connection
+
 from agent_cli.memory.semantic import SemanticMemory, _cosine_similarity
+from agent_cli.memory.store import get_connection
 
 
 class TestCosineSimilarity:

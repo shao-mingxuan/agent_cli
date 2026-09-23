@@ -1,4 +1,5 @@
 """L3 技能 - 技能注册中心。"""
+
 from .define_skill import Skill
 
 

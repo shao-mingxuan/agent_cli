@@ -1,5 +1,5 @@
 """L6 SafetyGuardMiddleware 测试。"""
-from agent_cli.middleware.types import GuardResult
+
 from agent_cli.middleware.builtin.safety_guard import SafetyGuardMiddleware
 
 

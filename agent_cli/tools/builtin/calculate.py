@@ -1,11 +1,11 @@
 """L3 工具 - 数学计算工具（基于 AST 白名单的安全求值）。"""
+
 import ast
 import math
 import operator
 from typing import Any
 
 from langchain.tools import tool
-
 
 _ALLOWED_OPS: dict[type, Any] = {
     ast.Add: operator.add,
@@ -63,8 +63,6 @@ _ALLOWED_NAMES: set[str] = {"True", "False", "None"}
 
 class _SecurityError(Exception):
     """表达式包含不允许的节点类型。"""
-
-    pass
 
 
 def _eval_node(node: ast.AST) -> Any:

@@ -1,4 +1,5 @@
 """L3 技能 - Skill 定义与装饰器。"""
+
 from dataclasses import dataclass
 from typing import Callable
 

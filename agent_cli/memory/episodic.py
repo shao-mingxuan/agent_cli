@@ -1,4 +1,5 @@
 """L4 记忆 - 历史会话（SQLite 持久化）。"""
+
 import sqlite3
 
 DEFAULT_RECALL_COUNT = 5
@@ -66,7 +67,5 @@ class EpisodicMemory:
 
     def count(self) -> int:
         """返回已存储的会话总数。"""
-        row = self._conn.execute(
-            "SELECT COUNT(*) FROM episodic_memory"
-        ).fetchone()
+        row = self._conn.execute("SELECT COUNT(*) FROM episodic_memory").fetchone()
         return row[0] if row else 0

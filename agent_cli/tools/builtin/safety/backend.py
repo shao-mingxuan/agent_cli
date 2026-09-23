@@ -1,4 +1,5 @@
 """L3 工具 - 安全检测后端抽象层 + 本地默认实现。"""
+
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -22,15 +23,44 @@ _PII_PATTERNS: list[tuple[str, str]] = [
 ]
 
 _VIOLATION_WORDS: list[str] = [
-    "笨蛋", "蠢货", "白痴", "废物", "滚蛋", "去死",
-    "fuck", "shit", "damn", "bitch", "asshole",
-    "脑残", "弱智", "变态", "神经病",
-    "色情", "黄色", "裸体", "裸照",
-    "赌博", "毒品", "大麻", "可卡因",
-    "诈骗", "洗钱", "贿赂",
-    "反动", "颠覆", "暴乱",
-    "黑客", "攻击", "入侵", "病毒", "木马",
-    "枪支", "弹药", "爆炸", "炸弹",
+    "笨蛋",
+    "蠢货",
+    "白痴",
+    "废物",
+    "滚蛋",
+    "去死",
+    "fuck",
+    "shit",
+    "damn",
+    "bitch",
+    "asshole",
+    "脑残",
+    "弱智",
+    "变态",
+    "神经病",
+    "色情",
+    "黄色",
+    "裸体",
+    "裸照",
+    "赌博",
+    "毒品",
+    "大麻",
+    "可卡因",
+    "诈骗",
+    "洗钱",
+    "贿赂",
+    "反动",
+    "颠覆",
+    "暴乱",
+    "黑客",
+    "攻击",
+    "入侵",
+    "病毒",
+    "木马",
+    "枪支",
+    "弹药",
+    "爆炸",
+    "炸弹",
 ]
 
 _SQL_INJECTION_PATTERNS: list[str] = [
@@ -92,19 +122,15 @@ class SafetyBackend(ABC):
     """检测后端抽象基类。"""
 
     @abstractmethod
-    def detect_pii(self, text: str) -> DetectionResult:
-        ...
+    def detect_pii(self, text: str) -> DetectionResult: ...
 
     @abstractmethod
-    def detect_violation(self, text: str) -> DetectionResult:
-        ...
+    def detect_violation(self, text: str) -> DetectionResult: ...
 
     @abstractmethod
-    def validate_input(self, text: str) -> DetectionResult:
-        ...
+    def validate_input(self, text: str) -> DetectionResult: ...
 
-    def scan_file(self, filepath: str, content: str) -> DetectionResult:
-        ...
+    def scan_file(self, filepath: str, content: str) -> DetectionResult: ...
 
 
 class LocalSafetyBackend(SafetyBackend):
@@ -125,7 +151,9 @@ class LocalSafetyBackend(SafetyBackend):
                 findings.append({"type": pii_type, "value": masked, "raw": raw})
 
         if not findings:
-            return DetectionResult(risk_level="safe", findings=[], message="未检测到 PII 信息")
+            return DetectionResult(
+                risk_level="safe", findings=[], message="未检测到 PII 信息"
+            )
 
         return DetectionResult(
             risk_level="warning",
@@ -141,7 +169,9 @@ class LocalSafetyBackend(SafetyBackend):
                 hits.append({"type": "violation_word", "value": word})
 
         if not hits:
-            return DetectionResult(risk_level="safe", findings=[], message="未检测到违规内容")
+            return DetectionResult(
+                risk_level="safe", findings=[], message="未检测到违规内容"
+            )
 
         return DetectionResult(
             risk_level="danger",
@@ -153,14 +183,20 @@ class LocalSafetyBackend(SafetyBackend):
         findings: list[dict] = []
 
         if not text or not text.strip():
-            return DetectionResult(risk_level="warning", findings=[{"type": "empty", "value": ""}], message="输入为空")
+            return DetectionResult(
+                risk_level="warning",
+                findings=[{"type": "empty", "value": ""}],
+                message="输入为空",
+            )
 
         if len(text) > 10000:
             findings.append({"type": "too_long", "value": f"长度 {len(text)}"})
 
         control_chars = re.findall(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", text)
         if control_chars:
-            findings.append({"type": "control_char", "value": f"{len(control_chars)} 个控制字符"})
+            findings.append(
+                {"type": "control_char", "value": f"{len(control_chars)} 个控制字符"}
+            )
 
         for pattern in _SQL_INJECTION_PATTERNS:
             if re.search(pattern, text, re.IGNORECASE):
@@ -173,10 +209,18 @@ class LocalSafetyBackend(SafetyBackend):
                 break
 
         if not findings:
-            return DetectionResult(risk_level="safe", findings=[], message="输入规范，无异常")
+            return DetectionResult(
+                risk_level="safe", findings=[], message="输入规范，无异常"
+            )
 
-        risk = "danger" if any(f["type"] in ("sql_injection", "control_char") for f in findings) else "warning"
-        return DetectionResult(risk_level=risk, findings=findings, message=f"检测到 {len(findings)} 个问题")
+        risk = (
+            "danger"
+            if any(f["type"] in ("sql_injection", "control_char") for f in findings)
+            else "warning"
+        )
+        return DetectionResult(
+            risk_level=risk, findings=findings, message=f"检测到 {len(findings)} 个问题"
+        )
 
     def scan_file(self, filepath: str, content: str) -> DetectionResult:
         findings: list[dict] = []
@@ -199,9 +243,20 @@ class LocalSafetyBackend(SafetyBackend):
             findings.extend(violation_result.findings)
 
         if not findings:
-            return DetectionResult(risk_level="safe", findings=[], message="文件未检测到敏感信息")
+            return DetectionResult(
+                risk_level="safe", findings=[], message="文件未检测到敏感信息"
+            )
 
-        has_danger = any(f["type"] in ("sensitive_path", "private_key_header", "password_assignment", "token_assignment") for f in findings)
+        has_danger = any(
+            f["type"]
+            in (
+                "sensitive_path",
+                "private_key_header",
+                "password_assignment",
+                "token_assignment",
+            )
+            for f in findings
+        )
         risk = "danger" if has_danger else "warning"
         return DetectionResult(
             risk_level=risk,

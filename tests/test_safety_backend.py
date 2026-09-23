@@ -1,4 +1,5 @@
 """L3 安全后端测试 - 纯 regex/keyword 逻辑。"""
+
 import pytest
 
 from agent_cli.tools.builtin.safety.backend import (

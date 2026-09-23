@@ -1,11 +1,13 @@
 """L3 MCP 客户端 - 连接单个 MCP server，async→sync 桥接。"""
+
 import asyncio
 import threading
 from dataclasses import dataclass, field
 from typing import Any
 
 from mcp import Client, StdioServerParameters
-from mcp.types import Tool as MCPTool, TextContent
+from mcp.types import TextContent
+from mcp.types import Tool as MCPTool
 
 
 @dataclass
@@ -99,7 +101,9 @@ class MCPClient:
     def disconnect(self) -> None:
         """关闭连接并停止事件循环。"""
         if self._connected and self._client:
-            future = asyncio.run_coroutine_threadsafe(self._async_disconnect(), self._loop)
+            future = asyncio.run_coroutine_threadsafe(
+                self._async_disconnect(), self._loop
+            )
             try:
                 future.result(timeout=10)
             except Exception:
@@ -177,7 +181,6 @@ def load_mcp_servers_from_config(path: str) -> list[MCPServerConfig]:
         }
     """
     import json
-    import os
 
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)

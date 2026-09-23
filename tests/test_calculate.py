@@ -1,4 +1,5 @@
 """L3 计算工具测试 + 安全测试。"""
+
 from agent_cli.tools.builtin.calculate import calculate
 
 
@@ -107,7 +108,9 @@ class TestSecurity:
         assert "计算错误" in result
 
     def test_blocks_subclasses_access(self):
-        result = calculate.invoke({"expression": "(1).__class__.__bases__[0].__subclasses__()"})
+        result = calculate.invoke(
+            {"expression": "(1).__class__.__bases__[0].__subclasses__()"}
+        )
         assert "计算错误" in result
 
     def test_blocks_globals_access(self):
@@ -115,7 +118,9 @@ class TestSecurity:
         assert "计算错误" in result
 
     def test_blocks_getattr_chain(self):
-        result = calculate.invoke({"expression": "(1).__class__.__bases__[0].__subclasses__"})
+        result = calculate.invoke(
+            {"expression": "(1).__class__.__bases__[0].__subclasses__"}
+        )
         assert "计算错误" in result
 
     def test_blocks_lambda(self):
