@@ -28,9 +28,13 @@ def safety_backend_instance():
 def fake_provider():
     """返回一个模拟的 BaseProvider 实现。"""
     from types import SimpleNamespace
+    from unittest.mock import MagicMock
 
+    mock_model = MagicMock()
+    mock_model.invoke.return_value = MagicMock(content="mock summary")
     return SimpleNamespace(
-        get_model=lambda: "fake_model",
+        get_model=lambda: mock_model,
+        get_embeddings=lambda: None,
         model_name="test-model",
         base_url="http://test",
     )
@@ -114,6 +118,9 @@ def make_orchestrator(mock_create_agent, fake_provider):
         fake_agent = FakeAgent(script=script, state_values=state_values)
         mock_create_agent.return_value = fake_agent
         from agent_cli.agent.orchestrator import Orchestrator
+
+        if kwargs.get("enable_long_term_memory") and "db_path" not in kwargs:
+            kwargs["db_path"] = ":memory:"
 
         orch = Orchestrator(provider=fake_provider, **kwargs)
         return orch, fake_agent

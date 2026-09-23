@@ -1,14 +1,12 @@
 """L0 CLI - chat / run 子命令实现。"""
 import json
-import math
 import shutil
 import sys
 import threading
 
 import click
 from dotenv import load_dotenv
-
-from rich.console import Console, Group
+from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.rule import Rule
@@ -18,13 +16,12 @@ from rich.text import Text
 
 from ..agent.orchestrator import Orchestrator
 from ..agent.types import StepType
+from ..mcp import MCPRegistry, load_mcp_servers_from_config, parse_mcp_server_spec
 from ..memory.working import WorkingMemory
-from ..providers.openai_compat import OpenAICompatProvider
 from ..prompts.builtin.default import DEFAULT_SYSTEM_PROMPT
-from ..mcp import MCPRegistry, parse_mcp_server_spec, load_mcp_servers_from_config
-from ..tools.loader import load_plugins
+from ..providers.openai_compat import OpenAICompatProvider
 from ..skills.loader import load_skill_registry
-
+from ..tools.loader import load_plugins
 
 console = Console()
 
@@ -173,7 +170,7 @@ def _print_think(event, display: TypewriterDisplay):
             console.print(
                 Text.assemble(
                     ("          ", ""),
-                    (f"{k} = {repr(v)}", "dim"),
+                    (f"{k} = {v!r}", "dim"),
                 )
             )
     console.print()
@@ -244,6 +241,12 @@ def _print_config(agent: Orchestrator) -> None:
             console.print(Text(f"    - {mt['name']}  ({mt['category']})"), markup=False)
         console.print()
 
+    if cfg.get("long_term_memory"):
+        console.print("[bold]长期记忆[/bold]")
+        console.print(f"  历史会话: {cfg['episodic_count']} 条")
+        console.print(f"  知识事实: {cfg['semantic_count']} 条")
+        console.print()
+
     console.print(Rule(style="dim"))
 
 
@@ -298,7 +301,7 @@ def _full_approval_callback(tool_calls: list[dict]) -> list[bool]:
             console.print(
                 Text.assemble(
                     ("          ", ""),
-                    (f"{k} = {repr(v)}", "dim"),
+                    (f"{k} = {v!r}", "dim"),
                 )
             )
         try:
@@ -344,7 +347,7 @@ def _sensitive_approval_callback(tool_calls: list[dict]) -> list[bool]:
             console.print(
                 Text.assemble(
                     ("          ", ""),
-                    (f"{k} = {repr(v)}", "dim"),
+                    (f"{k} = {v!r}", "dim"),
                 )
             )
         try:
@@ -372,6 +375,10 @@ def create_orchestrator(
     skill_name: str | None = None,
     skills_dir: str = "./skills",
     approval: bool = False,
+    max_messages: int | None = None,
+    max_tokens: int | None = None,
+    no_compress: bool = False,
+    no_memory: bool = False,
 ) -> Orchestrator:
     """创建 Orchestrator 实例，加载内置 + MCP + 插件工具。"""
     provider = OpenAICompatProvider()
@@ -427,6 +434,10 @@ def create_orchestrator(
         extra_tool_infos=plugin_infos,
         skill=active_skill,
         approval_callback=approval_cb,
+        max_messages=max_messages,
+        max_tokens=max_tokens,
+        enable_compression=not no_compress,
+        enable_long_term_memory=not no_memory,
     )
 
 
@@ -602,10 +613,26 @@ def run_repl(agent: Orchestrator) -> None:
 @click.option(
     "--approve", is_flag=True, default=False, help="启用工具调用审批"
 )
-def chat(system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name, approve):
+@click.option(
+    "--max-messages", default=None, type=int,
+    help="上下文滑动窗口大小（保留的最大消息条数，默认 50）"
+)
+@click.option(
+    "--max-tokens", default=None, type=int,
+    help="上下文 token 预算（超出触发摘要压缩，默认 4000）"
+)
+@click.option(
+    "--no-compress", is_flag=True, default=False,
+    help="禁用摘要压缩，仅使用滑动窗口"
+)
+@click.option(
+    "--no-memory", is_flag=True, default=False,
+    help="禁用长期记忆（不持久化会话摘要和事实）"
+)
+def chat(system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name, approve, max_messages, max_tokens, no_compress, no_memory):
     """启动交互式对话。"""
     load_dotenv()
-    agent = create_orchestrator(system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name, approval=approve)
+    agent = create_orchestrator(system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name, approval=approve, max_messages=max_messages, max_tokens=max_tokens, no_compress=no_compress, no_memory=no_memory)
     try:
         run_repl(agent)
     finally:
@@ -634,10 +661,26 @@ def chat(system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name, approv
 @click.option(
     "--approve", is_flag=True, default=False, help="启用工具调用审批"
 )
-def run(prompt, system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name, approve):
+@click.option(
+    "--max-messages", default=None, type=int,
+    help="上下文滑动窗口大小（保留的最大消息条数，默认 50）"
+)
+@click.option(
+    "--max-tokens", default=None, type=int,
+    help="上下文 token 预算（超出触发摘要压缩，默认 4000）"
+)
+@click.option(
+    "--no-compress", is_flag=True, default=False,
+    help="禁用摘要压缩，仅使用滑动窗口"
+)
+@click.option(
+    "--no-memory", is_flag=True, default=False,
+    help="禁用长期记忆（不持久化会话摘要和事实）"
+)
+def run(prompt, system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name, approve, max_messages, max_tokens, no_compress, no_memory):
     """单次执行一个问题。"""
     load_dotenv()
-    agent = create_orchestrator(system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name, approval=approve)
+    agent = create_orchestrator(system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name, approval=approve, max_messages=max_messages, max_tokens=max_tokens, no_compress=no_compress, no_memory=no_memory)
     try:
         _handle_events(agent, prompt)
     finally:
@@ -665,10 +708,26 @@ def run(prompt, system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name,
 @click.option(
     "--approve", is_flag=True, default=False, help="启用工具调用审批"
 )
-def config(system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name, approve):
+@click.option(
+    "--max-messages", default=None, type=int,
+    help="上下文滑动窗口大小（保留的最大消息条数，默认 50）"
+)
+@click.option(
+    "--max-tokens", default=None, type=int,
+    help="上下文 token 预算（超出触发摘要压缩，默认 4000）"
+)
+@click.option(
+    "--no-compress", is_flag=True, default=False,
+    help="禁用摘要压缩，仅使用滑动窗口"
+)
+@click.option(
+    "--no-memory", is_flag=True, default=False,
+    help="禁用长期记忆（不持久化会话摘要和事实）"
+)
+def config(system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name, approve, max_messages, max_tokens, no_compress, no_memory):
     """查看当前 Agent 配置信息（不启动对话）。"""
     load_dotenv()
-    agent = create_orchestrator(system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name, approval=approve)
+    agent = create_orchestrator(system_prompt, mcp_servers, mcp_config, plugins_dir, skill_name, approval=approve, max_messages=max_messages, max_tokens=max_tokens, no_compress=no_compress, no_memory=no_memory)
     try:
         _print_config(agent)
     finally:

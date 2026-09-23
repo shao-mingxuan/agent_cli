@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage, HumanMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage, HumanMessage, SystemMessage
 
 from agent_cli.agent.orchestrator import Orchestrator
 from agent_cli.agent.types import AgentEvent, StepType
@@ -153,6 +153,45 @@ class TestGetConfigInfo:
         orch, _ = make_orchestrator()
         info = orch.get_config_info()
         assert "system_prompt_preview" in info
+
+    def test_max_messages_in_config(self, make_orchestrator):
+        orch, _ = make_orchestrator()
+        info = orch.get_config_info()
+        assert "max_messages" in info
+
+    def test_custom_max_messages(self, make_orchestrator):
+        orch, _ = make_orchestrator(max_messages=10)
+        assert orch.memory.max_messages == 10
+        assert orch.get_config_info()["max_messages"] == 10
+
+    def test_max_tokens_in_config(self, make_orchestrator):
+        orch, _ = make_orchestrator()
+        info = orch.get_config_info()
+        assert "max_tokens" in info
+        assert "compression_enabled" in info
+
+    def test_custom_max_tokens(self, make_orchestrator):
+        orch, _ = make_orchestrator(max_tokens=2000)
+        assert orch.memory.max_tokens == 2000
+        assert orch.get_config_info()["max_tokens"] == 2000
+
+    def test_compression_enabled_by_default(self, make_orchestrator):
+        orch, _ = make_orchestrator()
+        assert orch.memory.compression_enabled is True
+        assert orch.get_config_info()["compression_enabled"] is True
+
+    def test_no_compress_disables(self, make_orchestrator):
+        orch, _ = make_orchestrator(enable_compression=False)
+        assert orch.memory.compression_enabled is False
+        assert orch.get_config_info()["compression_enabled"] is False
+
+    def test_compression_threshold(self, make_orchestrator):
+        orch, _ = make_orchestrator(compression_threshold=5)
+        assert orch.memory._compression_threshold == 5
+
+    def test_keep_recent(self, make_orchestrator):
+        orch, _ = make_orchestrator(keep_recent=3)
+        assert orch.memory._keep_recent == 3
 
 
 # ── reset / cleanup ──
@@ -421,3 +460,98 @@ class TestQuestionFallback:
         assert len(approve_events) == 0
         respond = events[-1]
         assert "？" in respond.content or "?" in respond.content
+
+
+# ── 长期记忆集成 ──
+
+
+class TestLongTermMemory:
+    def test_disabled_by_default(self, make_orchestrator):
+        orch, _ = make_orchestrator()
+        assert orch._ltm_enabled is False
+        assert orch._episodic_memory is None
+
+    def test_enabled_creates_db(self, make_orchestrator):
+        orch, _ = make_orchestrator(enable_long_term_memory=True)
+        assert orch._ltm_enabled is True
+        assert orch._episodic_memory is not None
+        assert orch._semantic_memory is not None
+
+    def test_episodic_injected_on_init_empty(self, make_orchestrator):
+        orch, _ = make_orchestrator(enable_long_term_memory=True)
+        msgs = orch.memory.get_messages()
+        assert len(msgs) == 0
+
+    def test_episodic_injected_with_data(self, make_orchestrator):
+        orch, _ = make_orchestrator(enable_long_term_memory=True)
+        orch._episodic_memory.save_session("prev", "之前的对话摘要")
+        orch._inject_episodic_memory()
+        msgs = orch.memory.get_messages()
+        assert len(msgs) == 1
+        assert "[历史会话记忆]" in msgs[0].content
+
+    def test_semantic_injected_on_first_input(self, make_orchestrator):
+        script = [
+            make_msg_chunk(AIMessageChunk(content="hi", id="r1"), "model"),
+            make_update_chunk({"model": {"messages": [AIMessage(content="hi")]}}),
+        ]
+        orch, _ = make_orchestrator(script=script, enable_long_term_memory=True)
+        orch._semantic_memory.store_fact("用户喜欢 python", embedding=None)
+        events = list(orch.run_stream("python question"))
+        msgs = orch.memory.get_messages()
+        semantic_msgs = [
+            m for m in msgs
+            if isinstance(m, SystemMessage) and "[相关知识记忆]" in m.content
+        ]
+        assert len(semantic_msgs) == 1
+
+    def test_semantic_not_reinjected(self, make_orchestrator):
+        script = [
+            make_msg_chunk(AIMessageChunk(content="hi", id="r1"), "model"),
+            make_update_chunk({"model": {"messages": [AIMessage(content="hi")]}}),
+            make_msg_chunk(AIMessageChunk(content="bye", id="r2"), "model"),
+            make_update_chunk({"model": {"messages": [AIMessage(content="bye")]}}),
+        ]
+        orch, _ = make_orchestrator(script=script, enable_long_term_memory=True)
+        orch._semantic_memory.store_fact("用户喜欢 python", embedding=None)
+        list(orch.run_stream("python question"))
+        list(orch.run_stream("python again"))
+        msgs = orch.memory.get_messages()
+        semantic_count = sum(
+            1 for m in msgs
+            if isinstance(m, SystemMessage) and "[相关知识记忆]" in m.content
+        )
+        assert semantic_count == 1
+
+    def test_reset_reinjects_episodic(self, make_orchestrator):
+        orch, _ = make_orchestrator(enable_long_term_memory=True)
+        orch._episodic_memory.save_session("prev", "prev summary")
+        orch.memory.add_human("test")
+        orch.reset()
+        msgs = orch.memory.get_messages()
+        assert len(msgs) == 1
+        assert "[历史会话记忆]" in msgs[0].content
+        assert orch._semantic_injected is False
+
+    def test_cleanup_saves_session(self, make_orchestrator):
+        orch, _ = make_orchestrator(enable_long_term_memory=True)
+        orch.memory.add_human("hello")
+        orch.memory.add_ai("hi there")
+        orch.memory.add_human("how are you")
+        orch.memory.add_ai("good")
+        orch._save_session()
+        assert orch._episodic_memory.count() == 1
+        orch.cleanup()
+
+    def test_cleanup_no_save_short_conversation(self, make_orchestrator):
+        orch, _ = make_orchestrator(enable_long_term_memory=True)
+        orch._save_session()
+        assert orch._episodic_memory.count() == 0
+        orch.cleanup()
+
+    def test_config_info_includes_ltm(self, make_orchestrator):
+        orch, _ = make_orchestrator(enable_long_term_memory=True)
+        info = orch.get_config_info()
+        assert info["long_term_memory"] is True
+        assert "episodic_count" in info
+        assert "semantic_count" in info

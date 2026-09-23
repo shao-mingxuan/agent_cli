@@ -1,19 +1,24 @@
 """L1 编排核心 - Agent 循环主控。"""
 import uuid
-from typing import Any, Callable, Iterator
+from collections.abc import Iterator
+from typing import Any, Callable
 
 from langchain.agents import create_agent
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    SystemMessage,
+    ToolMessage,
+)
 
-from ..memory.working import WorkingMemory
-from ..providers.base import BaseProvider
-from ..prompts.builtin.default import DEFAULT_SYSTEM_PROMPT
-from ..tools.registry import ToolRegistry, create_default_registry, ToolInfo
-from ..middleware.pipeline import MiddlewarePipeline, create_default_pipeline
-from ..middleware.types import GuardResult
 from ..mcp.registry import MCPRegistry
+from ..memory.summarizer import create_llm_summarizer
+from ..memory.working import WorkingMemory
+from ..middleware.pipeline import MiddlewarePipeline, create_default_pipeline
+from ..prompts.builtin.default import DEFAULT_SYSTEM_PROMPT
+from ..providers.base import BaseProvider
 from ..skills.define_skill import Skill
-from .types import AgentState, AgentEvent, StepType
+from ..tools.registry import ToolInfo, create_default_registry
+from .types import AgentEvent, StepType
 
 MAX_TOOL_FAILURES = 3
 _TOOL_ERROR_MARKERS = ("error", "mcp error", "exception", "traceback", "failed")
@@ -73,10 +78,32 @@ class Orchestrator:
         extra_tool_infos: list[ToolInfo] | None = None,
         skill: Skill | None = None,
         approval_callback: Callable[[list[dict]], list[bool]] | None = None,
+        max_messages: int | None = None,
+        max_tokens: int | None = None,
+        compression_threshold: int | None = None,
+        keep_recent: int | None = None,
+        summarizer_model: Any = None,
+        enable_compression: bool = True,
+        enable_long_term_memory: bool = False,
+        db_path: str | None = None,
     ):
         self.provider = provider
         self.model = provider.get_model()
         self.memory = memory or WorkingMemory()
+        if max_messages is not None:
+            self.memory.max_messages = max_messages
+
+        if enable_compression:
+            summarizer_model = summarizer_model or self.model
+            self.memory._summarizer = create_llm_summarizer(summarizer_model)
+            if max_tokens is not None:
+                self.memory._max_tokens = max_tokens
+            if compression_threshold is not None:
+                self.memory._compression_threshold = compression_threshold
+            if keep_recent is not None:
+                self.memory._keep_recent = keep_recent
+        else:
+            self.memory._summarizer = None
         self.middleware = middleware or create_default_pipeline()
         self._mcp_registry = mcp_registry
         self._active_skill = skill
@@ -100,6 +127,21 @@ class Orchestrator:
 
         self._all_tools_info = self.registry.get_all_info()
         self._tool_lookup = {info.name: info for info in self._all_tools_info}
+
+        # 长期记忆
+        self._ltm_enabled = enable_long_term_memory
+        self._db_conn = None
+        self._episodic_memory = None
+        self._semantic_memory = None
+        self._fact_extractor = None
+        self._embedder = None
+        self._session_id = str(uuid.uuid4())
+        self._semantic_injected = False
+
+        if enable_long_term_memory:
+            self._init_long_term_memory(
+                db_path, summarizer_model or self.model
+            )
 
         # 应用 skill 配置并创建 agent
         self._apply_skill()
@@ -134,6 +176,95 @@ class Orchestrator:
             interrupt_before=interrupt_before,
         )
 
+    def _init_long_term_memory(
+        self, db_path: str | None, extractor_model: Any
+    ) -> None:
+        """初始化长期记忆：SQLite 连接、episodic/semantic 记忆、事实提取器。"""
+        from ..memory.episodic import EpisodicMemory
+        from ..memory.extractor import create_fact_extractor
+        from ..memory.semantic import SemanticMemory
+        from ..memory.store import get_connection
+
+        self._db_conn = get_connection(db_path)
+
+        get_embeddings = getattr(self.provider, "get_embeddings", None)
+        if get_embeddings:
+            try:
+                self._embedder = get_embeddings()
+            except Exception:
+                self._embedder = None
+
+        self._episodic_memory = EpisodicMemory(self._db_conn)
+        self._semantic_memory = SemanticMemory(
+            self._db_conn, embedder=self._embedder
+        )
+
+        try:
+            self._fact_extractor = create_fact_extractor(extractor_model)
+        except Exception:
+            self._fact_extractor = None
+
+        self._inject_episodic_memory()
+
+    def _inject_episodic_memory(self) -> None:
+        """注入历史会话回忆到 WorkingMemory。"""
+        if self._episodic_memory is None:
+            return
+        try:
+            text = self._episodic_memory.format_recall()
+            if text:
+                self.memory.add_message(SystemMessage(content=text))
+        except Exception:
+            pass
+
+    def _inject_semantic_memory(self, user_input: str) -> None:
+        """首次输入时检索语义记忆并注入到 WorkingMemory。"""
+        if self._semantic_memory is None:
+            return
+        try:
+            text = self._semantic_memory.format_recall(user_input)
+            if text:
+                self.memory.add_message(SystemMessage(content=text))
+        except Exception:
+            pass
+
+    def _save_session(self) -> None:
+        """提取会话摘要和事实，持久化到 SQLite。"""
+        if self._episodic_memory is None:
+            return
+
+        messages = self.memory.get_messages()
+        if len(messages) < 4:
+            return
+
+        text = self.memory._serialize_messages(messages)
+
+        if self.memory._summarizer:
+            try:
+                summary = self.memory._summarizer(text)
+                if summary:
+                    self._episodic_memory.save_session(
+                        self._session_id, summary
+                    )
+            except Exception:
+                pass
+
+        if self._fact_extractor:
+            try:
+                facts = self._fact_extractor(text)
+                for fact in facts:
+                    emb = None
+                    if self._embedder:
+                        try:
+                            emb = self._embedder(fact)
+                        except Exception:
+                            pass
+                    self._semantic_memory.store_fact(
+                        fact, source=self._session_id, embedding=emb
+                    )
+            except Exception:
+                pass
+
     def set_skill(self, skill: Skill | None) -> None:
         """动态切换技能。
 
@@ -141,6 +272,9 @@ class Orchestrator:
         """
         self._active_skill = skill
         self.memory.clear()
+        if self._ltm_enabled:
+            self._inject_episodic_memory()
+            self._semantic_injected = False
         self._apply_skill()
 
     def get_active_skill(self) -> Skill | None:
@@ -306,6 +440,11 @@ class Orchestrator:
         processed_input = user_input
         if self._active_skill and self._active_skill.preprocess:
             processed_input = self._active_skill.preprocess(user_input)
+
+        # 长期记忆：首次输入时注入语义回忆
+        if self._ltm_enabled and not self._semantic_injected:
+            self._inject_semantic_memory(processed_input)
+            self._semantic_injected = True
 
         self.memory.add_human(processed_input)
         self._thread_id = str(uuid.uuid4())
@@ -573,6 +712,9 @@ class Orchestrator:
     def reset(self) -> None:
         """清空对话记忆。"""
         self.memory.clear()
+        if self._ltm_enabled:
+            self._inject_episodic_memory()
+            self._semantic_injected = False
 
     def get_config_info(self) -> dict[str, Any]:
         """返回当前 Agent 配置的摘要信息。"""
@@ -615,9 +757,32 @@ class Orchestrator:
                 if self._approval_callback is not self._builtin_approval_callback
                 else "sensitive"
             ),
+            "max_messages": self.memory.max_messages,
+            "max_tokens": self.memory.max_tokens,
+            "compression_enabled": self.memory.compression_enabled,
+            "long_term_memory": self._ltm_enabled,
+            "episodic_count": (
+                self._episodic_memory.count()
+                if self._episodic_memory
+                else 0
+            ),
+            "semantic_count": (
+                self._semantic_memory.count()
+                if self._semantic_memory
+                else 0
+            ),
         }
 
     def cleanup(self) -> None:
-        """关闭外部连接（MCP server 等）。"""
+        """关闭外部连接（MCP server 等），持久化长期记忆。"""
+        if self._ltm_enabled:
+            try:
+                self._save_session()
+            except Exception:
+                pass
+            finally:
+                if self._db_conn:
+                    self._db_conn.close()
+
         if self._mcp_registry:
             self._mcp_registry.disconnect_all()
