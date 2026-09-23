@@ -7,6 +7,10 @@ from langchain_openai import ChatOpenAI
 
 from .base import BaseProvider
 
+# LLM / embedding 请求超时（秒），超时抛错触发降级，
+# 避免 API 挂起时阻塞对话或退出流程。
+REQUEST_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "60"))
+
 
 class OpenAICompatProvider(BaseProvider):
     """OpenAI 兼容接口的 Provider，支持星火、DeepSeek 等兼容 API。"""
@@ -26,12 +30,14 @@ class OpenAICompatProvider(BaseProvider):
         self.embedding_model = embedding_model or os.getenv(
             "EMBEDDING_MODEL", "text-embedding-ada-002"
         )
+        self.timeout = REQUEST_TIMEOUT
 
     def get_model(self) -> ChatOpenAI:
         return ChatOpenAI(
             model=self.model_name,
             api_key=self.api_key,
             base_url=self.base_url,
+            timeout=self.timeout,
         )
 
     def get_embeddings(self) -> Callable[[str], list[float]] | None:
@@ -45,6 +51,7 @@ class OpenAICompatProvider(BaseProvider):
                 model=self.embedding_model,
                 api_key=self.api_key,
                 base_url=self.base_url,
+                timeout=self.timeout,
             )
 
             def _embed(text: str) -> list[float]:

@@ -6,6 +6,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk, SystemMessage
 
 from agent_cli.agent.long_term_memory import (
     inject_episodic_memory,
+    inject_semantic_memory,
     save_session,
 )
 from agent_cli.agent.types import StepType
@@ -603,6 +604,26 @@ class TestLongTermMemory:
         save_session(orch)
         assert orch._episodic_memory.count() == 0
         orch.cleanup()
+
+    def test_cleanup_saves_short_self_intro(self, make_orchestrator):
+        """仅自我介绍一段（2 条消息）也应持久化事实，能记住用户身份。"""
+        orch, _ = make_orchestrator(enable_long_term_memory=True)
+        orch.memory.add_human("我叫 peter,今年18岁,做 IT 前端,用 React")
+        orch.memory.add_ai("好的 peter")
+        save_session(orch)
+        assert orch._episodic_memory.count() == 1
+        assert orch._semantic_memory.count() >= 1
+        orch.cleanup()
+
+    def test_semantic_injected_fallback_when_no_match(self, make_orchestrator):
+        """查询无关键词命中时，兜底注入最近事实（如“你好”也能带出身份）。"""
+        orch, _ = make_orchestrator(enable_long_term_memory=True)
+        orch._semantic_memory.store_fact("用户的名字是 peter")
+        inject_semantic_memory(orch, "在吗")
+        msgs = orch.memory.get_messages()
+        assert any(
+            isinstance(m, SystemMessage) and "peter" in m.content for m in msgs
+        )
 
     def test_config_info_includes_ltm(self, make_orchestrator):
         orch, _ = make_orchestrator(enable_long_term_memory=True)

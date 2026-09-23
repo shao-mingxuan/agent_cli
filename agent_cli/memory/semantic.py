@@ -2,11 +2,31 @@
 
 import json
 import math
+import re
 import sqlite3
 from typing import Callable
 
 DEFAULT_TOP_K = 5
 DEFAULT_SIMILARITY_THRESHOLD = 0.3
+
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]+")
+_ASCII_RE = re.compile(r"[a-z0-9]+")
+
+
+def _tokens(text: str) -> set[str]:
+    """将文本拆分为可用于匹配的 token 集合。
+
+    英文/数字按单词拆分（转小写），中文连续段按双字 bigram 拆分，
+    同时保留整段，使无 embedding 时的关键词检索对中文同样有效。
+    """
+    text = text.lower()
+    tokens: set[str] = set()
+    tokens.update(_ASCII_RE.findall(text))
+    for run in _CJK_RE.findall(text):
+        if len(run) >= 2:
+            tokens.update(run[i : i + 2] for i in range(len(run) - 1))
+        tokens.add(run)
+    return tokens
 
 
 class SemanticMemory:
@@ -84,9 +104,9 @@ class SemanticMemory:
         return scored[:k]
 
     def _keyword_retrieve(self, query: str, top_k: int | None = None) -> list[dict]:
-        """降级方案：关键词匹配。"""
-        keywords = set(query.lower().split())
-        if not keywords:
+        """降级方案：关键词匹配（含中文 bigram）。"""
+        query_tokens = _tokens(query)
+        if not query_tokens:
             return []
 
         rows = self._conn.execute(
@@ -95,8 +115,8 @@ class SemanticMemory:
 
         scored = []
         for row in rows:
-            content_lower = row["content"].lower()
-            matches = sum(1 for kw in keywords if kw in content_lower)
+            fact_tokens = _tokens(row["content"])
+            matches = len(query_tokens & fact_tokens)
             if matches > 0:
                 scored.append(
                     {
@@ -113,6 +133,22 @@ class SemanticMemory:
     def format_recall(self, query: str, top_k: int | None = None) -> str:
         """检索并格式化为可注入的上下文文本。"""
         facts = self.retrieve(query, top_k)
+        if not facts:
+            return ""
+        lines = [f"- {f['content']}" for f in facts]
+        return "[相关知识记忆]\n" + "\n".join(lines)
+
+    def recent_facts(self, limit: int = 5) -> list[dict]:
+        """返回最近存储的 limit 条事实（按入库顺序倒序）。"""
+        rows = self._conn.execute(
+            "SELECT content, source FROM semantic_memory ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [{"content": r["content"], "source": r["source"]} for r in rows]
+
+    def format_recent(self, limit: int = 5) -> str:
+        """格式化为可注入的最近事实文本（查询无命中时的兜底）。"""
+        facts = self.recent_facts(limit)
         if not facts:
             return ""
         lines = [f"- {f['content']}" for f in facts]

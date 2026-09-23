@@ -13,6 +13,7 @@ from rich.text import Text
 
 from ..agent.orchestrator import Orchestrator
 from ..agent.types import StepType
+from .cancel import CancelController
 from .utils import console, make_tag
 
 
@@ -92,6 +93,17 @@ class TypewriterDisplay:
         if result and self._is_tty:
             console.print(Markdown(result))
         return result
+
+    def abort(self) -> None:
+        """打断时清理：停止 spinner 和 Live，不渲染最终 Markdown。"""
+        with self._lock:
+            if self._status:
+                self._status.stop()
+                self._status = None
+            if self._live:
+                self._live.stop()
+                self._live = None
+            self._buffer = ""
 
 
 def print_guard(event):
@@ -237,29 +249,55 @@ def print_config(agent: Orchestrator) -> None:
 
 
 def handle_events(agent: Orchestrator, user_input: str):
-    """处理 agent 事件流，带 spinner 和打字机效果。"""
+    """处理 agent 事件流，带 spinner 和打字机效果。
+
+    支持按 ESC 打断：监听期间按 ESC 会停止生成并清理显示。
+    """
     display = TypewriterDisplay()
+    controller = CancelController()
+    controller.start()
+    resume_esc = False
+    try:
+        for event in agent.run_stream(user_input):
+            if controller.is_cancelled():
+                display.abort()
+                console.print(
+                    Text.assemble(
+                        ("  ⠂Interrupted  ", "bold red"),
+                        ("已打断当前回复（按 ESC）", "dim"),
+                    )
+                )
+                break
+            if resume_esc:
+                controller.start()
+                resume_esc = False
 
-    for event in agent.run_stream(user_input):
-        if event.step == StepType.GUARD:
-            print_guard(event)
-        elif event.step == StepType.THINKING:
-            display.start_thinking()
+            if event.step == StepType.GUARD:
+                print_guard(event)
+            elif event.step == StepType.THINKING:
+                display.start_thinking()
 
-        elif event.step == StepType.THINK:
-            print_think(event, display)
+            elif event.step == StepType.THINK:
+                print_think(event, display)
 
-        elif event.step == StepType.APPROVE:
-            display.stop_spinner()
+            elif event.step == StepType.APPROVE:
+                # 审批需要用户在终端输入 y/n。先停止 ESC 监听并恢复
+                # 终端规范模式（cbreak 下 readline 无法退格/编辑），
+                # 审批完成后由后续事件重新启动监听。
+                display.stop_spinner()
+                controller.stop()
+                resume_esc = True
 
-        elif event.step == StepType.ACT:
-            print_act(event, display)
+            elif event.step == StepType.ACT:
+                print_act(event, display)
 
-        elif event.step == StepType.TOKEN:
-            display.append_token(event.content)
+            elif event.step == StepType.TOKEN:
+                display.append_token(event.content)
 
-        elif event.step == StepType.RESPOND:
-            result = display.finish()
-            if not result and event.content:
-                console.print(Markdown(event.content))
-                console.print()
+            elif event.step == StepType.RESPOND:
+                result = display.finish()
+                if not result and event.content:
+                    console.print(Markdown(event.content))
+                    console.print()
+    finally:
+        controller.stop()

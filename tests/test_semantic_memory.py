@@ -107,6 +107,25 @@ class TestSemanticMemoryRetrieve:
         assert "[相关知识记忆]" in text
         assert "TypeScript" in text
 
+    def test_keyword_fallback_cjk_matches_bigram(self):
+        conn = get_connection(":memory:")
+        mem = SemanticMemory(conn, embedder=None)
+        mem.store_fact("用户的名字是 peter")
+        mem.store_fact("用户的职业是前端工程师")
+        results = mem.retrieve("我叫 peter 今年 18 岁")
+        assert len(results) == 1
+        assert "peter" in results[0]["content"]
+
+    def test_format_recent(self):
+        conn = get_connection(":memory:")
+        mem = SemanticMemory(conn, embedder=None)
+        mem.store_fact("用户的名字是 peter")
+        mem.store_fact("用户喜欢钓鱼")
+        text = mem.format_recent(limit=2)
+        assert "peter" in text
+        assert "钓鱼" in text
+        assert text.startswith("[相关知识记忆]")
+
     def test_similarity_threshold(self):
         conn = get_connection(":memory:")
         embedder = lambda text: [0.1, 0.9]
