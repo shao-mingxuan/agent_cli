@@ -9,6 +9,7 @@ from .repl import run_repl
 
 
 @click.command()
+@click.option("--provider", default=None, help="模型供应商：openai_compat / glm")
 @click.option("--system-prompt", "-s", default=None, help="自定义系统提示词")
 @click.option(
     "--mcp-server",
@@ -42,6 +43,7 @@ from .repl import run_repl
     help="禁用长期记忆（不持久化会话摘要和事实）",
 )
 def chat(
+    provider,
     system_prompt,
     mcp_servers,
     mcp_config,
@@ -61,6 +63,7 @@ def chat(
         mcp_config,
         plugins_dir,
         skill_name,
+        provider=provider,
         approval=approve,
         max_messages=max_messages,
         max_tokens=max_tokens,
@@ -75,6 +78,7 @@ def chat(
 
 @click.command()
 @click.option("--prompt", "-p", required=True, help="要发送的问题")
+@click.option("--provider", default=None, help="模型供应商：openai_compat / glm")
 @click.option("--system-prompt", "-s", default=None, help="自定义系统提示词")
 @click.option(
     "--mcp-server",
@@ -109,6 +113,7 @@ def chat(
 )
 def run(
     prompt,
+    provider,
     system_prompt,
     mcp_servers,
     mcp_config,
@@ -128,6 +133,7 @@ def run(
         mcp_config,
         plugins_dir,
         skill_name,
+        provider=provider,
         approval=approve,
         max_messages=max_messages,
         max_tokens=max_tokens,
@@ -141,6 +147,7 @@ def run(
 
 
 @click.command()
+@click.option("--provider", default=None, help="模型供应商：openai_compat / glm")
 @click.option("--system-prompt", "-s", default=None, help="自定义系统提示词")
 @click.option(
     "--mcp-server",
@@ -174,6 +181,7 @@ def run(
     help="禁用长期记忆（不持久化会话摘要和事实）",
 )
 def config(
+    provider,
     system_prompt,
     mcp_servers,
     mcp_config,
@@ -193,6 +201,7 @@ def config(
         mcp_config,
         plugins_dir,
         skill_name,
+        provider=provider,
         approval=approve,
         max_messages=max_messages,
         max_tokens=max_tokens,

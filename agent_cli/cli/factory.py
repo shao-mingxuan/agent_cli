@@ -1,16 +1,29 @@
 """L0 CLI - Orchestrator 工厂。"""
 
 import json
+import os
+
+import click
 
 from ..agent.orchestrator import Orchestrator
 from ..mcp import MCPRegistry, load_mcp_servers_from_config, parse_mcp_server_spec
 from ..memory.working import WorkingMemory
 from ..prompts.builtin.default import DEFAULT_SYSTEM_PROMPT
+from ..providers.base import BaseProvider
+from ..providers.glm import ZhipuProvider
 from ..providers.openai_compat import OpenAICompatProvider
 from ..skills.loader import load_skill_registry
 from ..tools.loader import load_plugins
 from .approval import full_approval_callback, sensitive_approval_callback
 from .utils import console
+
+
+def create_provider(provider_name: str | None = None) -> BaseProvider:
+    """根据名称创建模型 Provider，支持 openai_compat / glm。"""
+    name = (provider_name or os.getenv("PROVIDER", "openai_compat")).strip().lower()
+    if name in ("glm", "zhipu", "zhipuai", "bigmodel"):
+        return ZhipuProvider()
+    return OpenAICompatProvider()
 
 
 def create_orchestrator(
@@ -25,9 +38,10 @@ def create_orchestrator(
     max_tokens: int | None = None,
     no_compress: bool = False,
     no_memory: bool = False,
+    provider: str | None = None,
 ) -> Orchestrator:
     """创建 Orchestrator 实例，加载内置 + MCP + 插件工具。"""
-    provider = OpenAICompatProvider()
+    provider_obj = create_provider(provider)
     memory = WorkingMemory()
 
     all_configs: list = []
@@ -72,16 +86,20 @@ def create_orchestrator(
 
     approval_cb = full_approval_callback if approval else sensitive_approval_callback
 
-    return Orchestrator(
-        provider=provider,
-        memory=memory,
-        system_prompt=system_prompt or DEFAULT_SYSTEM_PROMPT,
-        mcp_registry=mcp_registry,
-        extra_tool_infos=plugin_infos,
-        skill=active_skill,
-        approval_callback=approval_cb,
-        max_messages=max_messages,
-        max_tokens=max_tokens,
-        enable_compression=not no_compress,
-        enable_long_term_memory=not no_memory,
-    )
+    try:
+        return Orchestrator(
+            provider=provider_obj,
+            memory=memory,
+            system_prompt=system_prompt or DEFAULT_SYSTEM_PROMPT,
+            mcp_registry=mcp_registry,
+            extra_tool_infos=plugin_infos,
+            skill=active_skill,
+            approval_callback=approval_cb,
+            max_messages=max_messages,
+            max_tokens=max_tokens,
+            enable_compression=not no_compress,
+            enable_long_term_memory=not no_memory,
+        )
+    except ValueError as e:
+        console.print(f"[bold red]{e}[/bold red]")
+        raise click.ClickException(str(e)) from e

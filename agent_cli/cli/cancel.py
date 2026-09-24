@@ -4,6 +4,7 @@ import os
 import select
 import sys
 import threading
+from _thread import interrupt_main
 
 try:
     import termios
@@ -15,11 +16,18 @@ except ImportError:  # pragma: no cover - 非 POSIX 平台
 
 
 class CancelController:
-    """监听 ESC 键，用于打断正在进行的对话生成。
+    """监听 ESC / Ctrl+C 键。
 
     后台线程把 stdin 设为 cbreak 模式（单字符读入、不回显），
-    检测到单独按下 ESC 时设置取消标志。start()/stop() 成对调用，
-    stop() 会恢复终端原始属性。
+    start()/stop() 成对调用，stop() 会恢复终端原始属性。
+
+    语义：
+    - ESC      → 设置取消标志，仅打断当前对话生成（不退出）。
+    - Ctrl+C   → 除设置取消标志外，还向主线程抛 KeyboardInterrupt，
+                 由 REPL 捕获后退出整个程序（相当于 /exit）。
+
+    注意：cbreak 模式会关闭 ISIG（Ctrl+C 不产生 SIGINT），因此 0x03 字节
+    必须由监听线程手动识别，否则生成期间 Ctrl+C 会完全失效。
 
     注意：方向键等以 ESC 起始的 CSI 序列（ESC [ ...）会被识别并忽略，
     避免误触发。
@@ -85,6 +93,12 @@ class CancelController:
                     if nxt == b"[":
                         continue  # 方向键序列，忽略
                 self._cancel.set()
+                break
+            if ch == b"\x03":
+                # Ctrl+C：cbreak 模式关闭了 ISIG，0x03 不会触发 SIGINT。
+                # 设置取消标志并让主线程抛 KeyboardInterrupt，实现退出程序。
+                self._cancel.set()
+                interrupt_main()
                 break
 
     def is_cancelled(self) -> bool:

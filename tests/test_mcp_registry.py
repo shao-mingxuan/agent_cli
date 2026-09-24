@@ -37,6 +37,36 @@ class TestEmptyRegistry:
         client2.disconnect.assert_called_once()
         assert reg.get_tool_infos() == []
 
+    def test_disconnect_all_parallel(self):
+        import threading
+        import time
+        from unittest.mock import MagicMock
+
+        started = []
+        lock = threading.Lock()
+
+        def slow_disconnect():
+            with lock:
+                started.append(True)
+            time.sleep(0.4)
+
+        reg = MCPRegistry()
+        client1 = MagicMock()
+        client2 = MagicMock()
+        client1.disconnect.side_effect = slow_disconnect
+        client2.disconnect.side_effect = slow_disconnect
+        reg._clients = [client1, client2]
+
+        t0 = time.monotonic()
+        reg.disconnect_all()
+        elapsed = time.monotonic() - t0
+
+        assert client1.disconnect.call_count == 1
+        assert client2.disconnect.call_count == 1
+        assert len(started) == 2
+        # 串行需要 0.8s，并行应在单个耗时附近完成
+        assert elapsed < 0.79, f"disconnect_all 未并行执行: {elapsed:.2f}s"
+
 
 class TestAddServer:
     def test_success(self):

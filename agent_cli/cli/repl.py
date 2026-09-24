@@ -35,8 +35,10 @@ def read_multiline_input() -> str:
         try:
             prompt_text = "你" if not lines else "… "
             line = click.prompt(prompt_text, type=str, default="", show_default=False)
-        except (EOFError, click.exceptions.Abort):
+        except EOFError:
             break
+        except click.exceptions.Abort:
+            raise  # Ctrl+C 直接退出，由 run_repl 统一处理
         if not line:
             break
         lines.append(line)
@@ -161,5 +163,9 @@ def run_repl(agent: Orchestrator) -> None:
             console.print(Rule(style="dim"))
             continue
 
-        handle_events(agent, user_input)
+        try:
+            handle_events(agent, user_input)
+        except KeyboardInterrupt:
+            console.print("\n再见！")
+            break
         console.print(Rule(style="dim"))

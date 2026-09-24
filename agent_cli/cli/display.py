@@ -252,11 +252,13 @@ def handle_events(agent: Orchestrator, user_input: str):
     """处理 agent 事件流，带 spinner 和打字机效果。
 
     支持按 ESC 打断：监听期间按 ESC 会停止生成并清理显示。
+    Ctrl+C 由 CancelController 转为主线程 KeyboardInterrupt，用于退出程序。
     """
     display = TypewriterDisplay()
     controller = CancelController()
     controller.start()
     resume_esc = False
+    finished = False
     try:
         for event in agent.run_stream(user_input):
             if controller.is_cancelled():
@@ -296,8 +298,11 @@ def handle_events(agent: Orchestrator, user_input: str):
 
             elif event.step == StepType.RESPOND:
                 result = display.finish()
+                finished = True
                 if not result and event.content:
                     console.print(Markdown(event.content))
                     console.print()
     finally:
         controller.stop()
+        if not finished:
+            display.abort()

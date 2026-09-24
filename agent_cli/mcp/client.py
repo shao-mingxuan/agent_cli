@@ -9,6 +9,14 @@ from mcp import Client, StdioServerParameters
 from mcp.types import TextContent
 from mcp.types import Tool as MCPTool
 
+# 默认注入给 stdio 子进程的环境变量：抑制 npm/npx 的升级、funding、audit
+# 提示，避免这些通知泄漏到终端干扰用户界面。用户自定义 env 会覆盖同名键。
+DEFAULT_SERVER_ENV: dict[str, str] = {
+    "NPM_CONFIG_UPDATE_NOTIFIER": "false",
+    "NPM_CONFIG_FUND": "false",
+    "NPM_CONFIG_AUDIT": "false",
+}
+
 
 @dataclass
 class MCPServerConfig:
@@ -49,10 +57,11 @@ class MCPClient:
 
     def _build_target(self) -> Any:
         if self.config.transport == "stdio":
+            env = {**DEFAULT_SERVER_ENV, **(self.config.env or {})}
             return StdioServerParameters(
                 command=self.config.command,
                 args=self.config.args,
-                env=self.config.env,
+                env=env,
             )
         elif self.config.transport == "sse":
             return self.config.url
@@ -99,7 +108,11 @@ class MCPClient:
         return output
 
     def disconnect(self) -> None:
-        """关闭连接并停止事件循环。"""
+        """关闭连接并停止事件循环。
+
+        SDK 的 stdio 关闭自带 bounded 超时（约 2s 优雅退出 + 2s 强制终止），
+        这里只预留足够余量，避免 loop 提前 stop 导致子进程未回收。
+        """
         if self._connected and self._client:
             future = asyncio.run_coroutine_threadsafe(
                 self._async_disconnect(), self._loop
@@ -112,7 +125,7 @@ class MCPClient:
         if self._loop and self._loop.is_running():
             self._loop.call_soon_threadsafe(self._loop.stop)
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=5)
+            self._thread.join(timeout=2)
         if self._loop:
             self._loop.close()
         self._connected = False

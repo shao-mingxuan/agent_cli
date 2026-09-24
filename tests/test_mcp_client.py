@@ -189,6 +189,25 @@ class TestMCPClientState:
         target = c._build_target()
         assert target is not None
         assert target.command == "python"
+        assert target.args == ["a"]
+        assert target.env["NPM_CONFIG_UPDATE_NOTIFIER"] == "false"
+        assert target.env["NPM_CONFIG_FUND"] == "false"
+        assert target.env["NPM_CONFIG_AUDIT"] == "false"
+
+    def test_build_target_stdio_user_env_overrides_default(self):
+        c = MCPClient(
+            MCPServerConfig(
+                name="t",
+                transport="stdio",
+                command="npx",
+                args=["a"],
+                env={"NPM_CONFIG_FUND": "true", "FOO": "1"},
+            )
+        )
+        target = c._build_target()
+        assert target.env["NPM_CONFIG_UPDATE_NOTIFIER"] == "false"
+        assert target.env["NPM_CONFIG_FUND"] == "true"
+        assert target.env["FOO"] == "1"
 
     def test_build_target_sse(self):
         c = MCPClient(MCPServerConfig(name="t", transport="sse", url="http://x.com"))

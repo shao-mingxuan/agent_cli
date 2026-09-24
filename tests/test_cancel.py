@@ -1,6 +1,7 @@
 """L0 CLI - ESC 打断功能测试。"""
 
 import io
+import os
 import unittest.mock as mock
 
 from rich.console import Console
@@ -116,6 +117,42 @@ class TestCancelController:
         c.start()
         assert not c.active
         c.stop()
+
+    def _run_listen(self, monkeypatch, key: bytes):
+        import agent_cli.cli.cancel as cancel_mod
+
+        c = CancelController()
+        r, w = os.pipe()
+        c._fd = r
+        interrupted = []
+        calls = {"n": 0}
+
+        def fake_select(rlist, wlist, xlist, timeout):
+            calls["n"] += 1
+            return (rlist, [], []) if calls["n"] == 1 else ([], [], [])
+
+        monkeypatch.setattr(
+            cancel_mod, "interrupt_main", lambda: interrupted.append(True)
+        )
+        monkeypatch.setattr(cancel_mod.select, "select", fake_select)
+        try:
+            os.write(w, key)
+            c._stop.clear()
+            c._listen()
+        finally:
+            os.close(r)
+            os.close(w)
+        return c, interrupted
+
+    def test_esc_triggers_cancel_without_interrupt(self, monkeypatch):
+        c, interrupted = self._run_listen(monkeypatch, b"\x1b")
+        assert c.is_cancelled()
+        assert interrupted == []
+
+    def test_ctrl_c_triggers_cancel_and_interrupt(self, monkeypatch):
+        c, interrupted = self._run_listen(monkeypatch, b"\x03")
+        assert c.is_cancelled()
+        assert interrupted == [True]
 
 
 class TestHandleEventsInterrupt:

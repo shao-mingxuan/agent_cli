@@ -1,5 +1,7 @@
 """L3 MCP 注册中心 - 管理多个 MCP server 连接。"""
 
+from concurrent.futures import ThreadPoolExecutor
+
 from ..tools.registry import ToolInfo
 from .adapters.to_tool import MCPToolAdapter
 from .client import MCPClient, MCPServerConfig
@@ -63,7 +65,16 @@ class MCPRegistry:
         return [info.tool for info in self._tool_infos]
 
     def disconnect_all(self) -> None:
-        for client in self._clients:
-            client.disconnect()
+        clients = list(self._clients)
         self._clients.clear()
         self._tool_infos.clear()
+        if not clients:
+            return
+        # 并行关闭，总耗时取决于最慢的单个 server，而非所有 server 之和，
+        # 避免 Ctrl+C 退出时被多个 stdio 子进程（如 npx）拖慢。
+        with ThreadPoolExecutor(max_workers=len(clients)) as ex:
+            list(ex.map(_disconnect_one, clients))
+
+
+def _disconnect_one(client: MCPClient) -> None:
+    client.disconnect()
