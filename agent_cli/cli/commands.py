@@ -10,6 +10,7 @@ from .repl import run_repl
 
 @click.command()
 @click.option("--provider", default=None, help="模型供应商：openai_compat / glm")
+@click.option("--model", "model_name", default=None, help="模型名称，如 spark-x2.5-4b / glm-4-flash")
 @click.option("--system-prompt", "-s", default=None, help="自定义系统提示词")
 @click.option(
     "--mcp-server",
@@ -44,6 +45,7 @@ from .repl import run_repl
 )
 def chat(
     provider,
+    model_name,
     system_prompt,
     mcp_servers,
     mcp_config,
@@ -64,6 +66,7 @@ def chat(
         plugins_dir,
         skill_name,
         provider=provider,
+        model_name=model_name,
         approval=approve,
         max_messages=max_messages,
         max_tokens=max_tokens,
@@ -79,6 +82,7 @@ def chat(
 @click.command()
 @click.option("--prompt", "-p", required=True, help="要发送的问题")
 @click.option("--provider", default=None, help="模型供应商：openai_compat / glm")
+@click.option("--model", "model_name", default=None, help="模型名称，如 spark-x2.5-4b / glm-4-flash")
 @click.option("--system-prompt", "-s", default=None, help="自定义系统提示词")
 @click.option(
     "--mcp-server",
@@ -114,6 +118,7 @@ def chat(
 def run(
     prompt,
     provider,
+    model_name,
     system_prompt,
     mcp_servers,
     mcp_config,
@@ -134,6 +139,7 @@ def run(
         plugins_dir,
         skill_name,
         provider=provider,
+        model_name=model_name,
         approval=approve,
         max_messages=max_messages,
         max_tokens=max_tokens,
@@ -148,6 +154,7 @@ def run(
 
 @click.command()
 @click.option("--provider", default=None, help="模型供应商：openai_compat / glm")
+@click.option("--model", "model_name", default=None, help="模型名称，如 spark-x2.5-4b / glm-4-flash")
 @click.option("--system-prompt", "-s", default=None, help="自定义系统提示词")
 @click.option(
     "--mcp-server",
@@ -182,6 +189,7 @@ def run(
 )
 def config(
     provider,
+    model_name,
     system_prompt,
     mcp_servers,
     mcp_config,
@@ -202,6 +210,7 @@ def config(
         plugins_dir,
         skill_name,
         provider=provider,
+        model_name=model_name,
         approval=approve,
         max_messages=max_messages,
         max_tokens=max_tokens,

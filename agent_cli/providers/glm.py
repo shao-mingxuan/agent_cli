@@ -29,7 +29,7 @@ class ZhipuProvider(BaseProvider):
         self.base_url = base_url or os.getenv(
             "GLM_API_BASE", "https://open.bigmodel.cn/api/paas/v4"
         )
-        self.model_name = model_name or os.getenv("GLM_MODEL", "glm-4-flash")
+        self.model_name = model_name or os.getenv("GLM_MODEL", "glm-5.3")
         self.embedding_model = embedding_model or os.getenv(
             "EMBEDDING_MODEL", "embedding-3"
         )
@@ -43,7 +43,13 @@ class ZhipuProvider(BaseProvider):
             api_key=self.api_key,
             base_url=self.base_url,
             timeout=self.timeout,
+            streaming=True,
         )
+
+    def switch_model(self, model_name: str) -> ChatOpenAI:
+        """切换模型并返回新的 ChatOpenAI 实例。"""
+        self.model_name = model_name
+        return self.get_model()
 
     def get_embeddings(self) -> Callable[[str], list[float]] | None:
         """创建 embedding 回调，API key 缺失或 import 失败时返回 None。"""

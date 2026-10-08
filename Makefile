@@ -4,10 +4,10 @@
 MCP_CONFIG := ./mcp.json
 
 chat:
-	venv/bin/agent chat --mcp-config "$(MCP_CONFIG)"
+	script -q /dev/null venv/bin/agent chat --mcp-config "$(MCP_CONFIG)"
 
 run:
-	venv/bin/agent run --mcp-config "$(MCP_CONFIG)" -p "$(p)"
+	script -q /dev/null venv/bin/agent run --mcp-config "$(MCP_CONFIG)" -p "$(p)"
 
 install:
 	venv/bin/python -m pip install -e .

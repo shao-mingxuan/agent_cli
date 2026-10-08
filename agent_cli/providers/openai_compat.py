@@ -38,7 +38,13 @@ class OpenAICompatProvider(BaseProvider):
             api_key=self.api_key,
             base_url=self.base_url,
             timeout=self.timeout,
+            streaming=True,
         )
+
+    def switch_model(self, model_name: str) -> ChatOpenAI:
+        """切换模型并返回新的 ChatOpenAI 实例。"""
+        self.model_name = model_name
+        return self.get_model()
 
     def get_embeddings(self) -> Callable[[str], list[float]] | None:
         """创建 embedding 回调，API key 缺失或 import 失败时返回 None。"""

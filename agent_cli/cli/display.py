@@ -44,6 +44,8 @@ class TypewriterDisplay:
 
     def start_thinking(self):
         if not self._is_tty:
+            sys.stdout.write("思考中...\n")
+            sys.stdout.flush()
             return
         with self._lock:
             if self._status is None:

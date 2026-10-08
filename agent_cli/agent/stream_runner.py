@@ -22,6 +22,9 @@ def run_stream_loop(orch, config: dict, pending_tool_calls: dict):
     - 处理中断 → 审批流程 → 拒绝注入
     - 连续失败计数与中止
     - 追问兜底
+
+    模型调用（agent.stream）抛出异常时不会向上传播导致 REPL 崩溃，
+    而是转换为 RESPOND 事件展示给用户（如 API key 无效、模型不存在）。
     """
     inputs = {"messages": orch.memory.get_messages()}
     respond_chunks: list[str] = []
@@ -36,115 +39,125 @@ def run_stream_loop(orch, config: dict, pending_tool_calls: dict):
     while True:
         interrupted = False
 
-        for chunk in orch.agent.stream(
-            stream_input, config=config, stream_mode=["messages", "updates"]
-        ):
-            mode, data = chunk
+        yield AgentEvent(step=StepType.THINKING, content="")
 
-            if mode == "updates" and "__interrupt__" in data:
-                interrupted = True
-                continue
+        try:
+            for chunk in orch.agent.stream(
+                stream_input, config=config, stream_mode=["messages", "updates"]
+            ):
+                mode, data = chunk
 
-            if mode == "messages":
-                msg, metadata = data
-                node = metadata.get("langgraph_node", "unknown")
-                msg_type = type(msg).__name__
-                run_id = getattr(msg, "id", "")
+                if mode == "updates" and "__interrupt__" in data:
+                    interrupted = True
+                    continue
 
-                if node == "model" and msg_type == "AIMessageChunk":
-                    tool_calls = getattr(msg, "tool_calls", None)
+                if mode == "messages":
+                    msg, metadata = data
+                    node = metadata.get("langgraph_node", "unknown")
+                    msg_type = type(msg).__name__
+                    run_id = getattr(msg, "id", "")
 
-                    if run_id and run_id != current_run_id:
-                        current_run_id = run_id
-                        if run_id not in thinking_sent_for_runs:
-                            yield AgentEvent(step=StepType.THINKING, content="")
-                            thinking_sent_for_runs.add(run_id)
+                    if node == "model" and msg_type == "AIMessageChunk":
+                        tool_calls = getattr(msg, "tool_calls", None)
 
-                    if tool_calls:
-                        run_ids_with_tools.add(run_id)
-                        continue
+                        if run_id and run_id != current_run_id:
+                            current_run_id = run_id
+                            if run_id not in thinking_sent_for_runs:
+                                yield AgentEvent(step=StepType.THINKING, content="")
+                                thinking_sent_for_runs.add(run_id)
 
-                    content = getattr(msg, "content", "")
-                    if content:
-                        if run_id not in run_ids_with_tools:
-                            yield AgentEvent(
-                                step=StepType.TOKEN,
-                                content=content,
-                            )
-                            respond_chunks.append(content)
+                        if tool_calls:
+                            run_ids_with_tools.add(run_id)
+                            continue
 
-            elif mode == "updates":
-                for node_name, node_output in data.items():
-                    for msg in node_output.get("messages", []):
-                        if node_name == "model":
-                            tool_calls = getattr(msg, "tool_calls", None)
-                            if tool_calls:
-                                tool_details = []
-                                for tc in tool_calls:
-                                    name = tc["name"]
-                                    args = tc.get("args", {})
-                                    info = orch._tool_lookup.get(name)
-                                    source = info.source if info else "unknown"
-                                    category = info.category if info else ""
-                                    pending_tool_calls[tc["id"]] = {
-                                        "name": name,
-                                        "source": source,
-                                        "category": category,
-                                        "args": args,
-                                    }
-                                    tool_details.append(
-                                        {
+                        content = getattr(msg, "content", "")
+                        if content:
+                            if run_id not in run_ids_with_tools:
+                                yield AgentEvent(
+                                    step=StepType.TOKEN,
+                                    content=content,
+                                )
+                                respond_chunks.append(content)
+
+                elif mode == "updates":
+                    for node_name, node_output in data.items():
+                        for msg in node_output.get("messages", []):
+                            if node_name == "model":
+                                tool_calls = getattr(msg, "tool_calls", None)
+                                if tool_calls:
+                                    tool_details = []
+                                    for tc in tool_calls:
+                                        name = tc["name"]
+                                        args = tc.get("args", {})
+                                        info = orch._tool_lookup.get(name)
+                                        source = info.source if info else "unknown"
+                                        category = info.category if info else ""
+                                        pending_tool_calls[tc["id"]] = {
                                             "name": name,
                                             "source": source,
                                             "category": category,
                                             "args": args,
                                         }
+                                        tool_details.append(
+                                            {
+                                                "name": name,
+                                                "source": source,
+                                                "category": category,
+                                                "args": args,
+                                            }
+                                        )
+                                    yield AgentEvent(
+                                        step=StepType.THINK,
+                                        content="",
+                                        metadata={"tool_details": tool_details},
                                     )
+                                    orch.memory.add_message(msg)
+                                else:
+                                    content = getattr(msg, "content", "")
+                                    orch.memory.add_ai(content)
+                            elif node_name == "tools":
+                                tc_id = getattr(msg, "tool_call_id", "")
+                                info = pending_tool_calls.pop(tc_id, {})
+                                tool_content = (
+                                    msg.content
+                                    if isinstance(msg.content, str)
+                                    else str(msg.content)
+                                )
+
+                                if is_tool_error(tool_content):
+                                    consecutive_failures += 1
+                                else:
+                                    consecutive_failures = 0
+
                                 yield AgentEvent(
-                                    step=StepType.THINK,
-                                    content="",
-                                    metadata={"tool_details": tool_details},
+                                    step=StepType.ACT,
+                                    content=tool_content,
+                                    metadata={
+                                        "tool_name": info.get("name", "unknown"),
+                                        "tool_source": info.get("source", "unknown"),
+                                        "tool_category": info.get("category", ""),
+                                        "tool_args": info.get("args", {}),
+                                        "tool_call_id": tc_id,
+                                    },
                                 )
                                 orch.memory.add_message(msg)
-                            else:
-                                content = getattr(msg, "content", "")
-                                orch.memory.add_ai(content)
-                        elif node_name == "tools":
-                            tc_id = getattr(msg, "tool_call_id", "")
-                            info = pending_tool_calls.pop(tc_id, {})
-                            tool_content = (
-                                msg.content
-                                if isinstance(msg.content, str)
-                                else str(msg.content)
-                            )
 
-                            if is_tool_error(tool_content):
-                                consecutive_failures += 1
-                            else:
-                                consecutive_failures = 0
+                                if consecutive_failures >= MAX_TOOL_FAILURES:
+                                    aborted = True
+                                    break
 
-                            yield AgentEvent(
-                                step=StepType.ACT,
-                                content=tool_content,
-                                metadata={
-                                    "tool_name": info.get("name", "unknown"),
-                                    "tool_source": info.get("source", "unknown"),
-                                    "tool_category": info.get("category", ""),
-                                    "tool_args": info.get("args", {}),
-                                    "tool_call_id": tc_id,
-                                },
-                            )
-                            orch.memory.add_message(msg)
+                        if aborted:
+                            break
 
-                            if consecutive_failures >= MAX_TOOL_FAILURES:
-                                aborted = True
-                                break
-
-                    if aborted:
-                        break
-
-            if aborted:
-                break
+                if aborted:
+                    break
+        except Exception as e:
+            yield AgentEvent(
+                step=StepType.RESPOND,
+                content=f"[模型调用失败] {type(e).__name__}: {e}",
+            )
+            aborted = True
+            break
 
         if interrupted:
             if last_model_output_is_question(orch, config):

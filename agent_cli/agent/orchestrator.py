@@ -153,6 +153,54 @@ class Orchestrator:
             self._semantic_injected = False
         self._apply_skill()
 
+    def set_model(self, model_name: str) -> Any:
+        """动态切换主模型并重建 agent。
+
+        切换会同步更新摘要压缩所用的模型。返回新的 model 实例。
+        """
+        self.model = self.provider.switch_model(model_name)
+        if self.memory._summarizer is not None:
+            from ..memory.summarizer import create_llm_summarizer
+
+            self.memory._summarizer = create_llm_summarizer(self.model)
+        self._rebind_memory_models()
+        self._apply_skill()
+        return self.model
+
+    def set_provider(
+        self, provider: BaseProvider, model_name: str | None = None
+    ) -> Any:
+        """整体切换 Provider（接口/密钥/模型名），并重建 agent 与记忆模型。"""
+        if model_name:
+            provider.switch_model(model_name)
+        self.provider = provider
+        self.model = provider.get_model()
+        if self.memory._summarizer is not None:
+            from ..memory.summarizer import create_llm_summarizer
+
+            self.memory._summarizer = create_llm_summarizer(self.model)
+        self._rebind_memory_models()
+        self._apply_skill()
+        return self.model
+
+    def _rebind_memory_models(self) -> None:
+        """切换模型/Provider 后，让长期记忆的 embedder 和事实提取器跟随新模型。
+
+        重建失败时保持为空（对应功能自动降级），不中断切换流程。
+        """
+        try:
+            get_embeddings = getattr(self.provider, "get_embeddings", None)
+            self._embedder = get_embeddings() if get_embeddings else None
+            if self._semantic_memory is not None:
+                self._semantic_memory._embedder = self._embedder
+                self._semantic_memory._embedder_failed = False
+
+            from ..memory.extractor import create_fact_extractor
+
+            self._fact_extractor = create_fact_extractor(self.model)
+        except Exception:
+            pass
+
     def get_active_skill(self) -> Skill | None:
         """获取当前激活的技能。"""
         return self._active_skill

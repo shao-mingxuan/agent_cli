@@ -18,12 +18,14 @@ from .approval import full_approval_callback, sensitive_approval_callback
 from .utils import console
 
 
-def create_provider(provider_name: str | None = None) -> BaseProvider:
+def create_provider(
+    provider_name: str | None = None, model_name: str | None = None
+) -> BaseProvider:
     """根据名称创建模型 Provider，支持 openai_compat / glm。"""
     name = (provider_name or os.getenv("PROVIDER", "openai_compat")).strip().lower()
     if name in ("glm", "zhipu", "zhipuai", "bigmodel"):
-        return ZhipuProvider()
-    return OpenAICompatProvider()
+        return ZhipuProvider(model_name=model_name)
+    return OpenAICompatProvider(model_name=model_name)
 
 
 def create_orchestrator(
@@ -39,9 +41,10 @@ def create_orchestrator(
     no_compress: bool = False,
     no_memory: bool = False,
     provider: str | None = None,
+    model_name: str | None = None,
 ) -> Orchestrator:
     """创建 Orchestrator 实例，加载内置 + MCP + 插件工具。"""
-    provider_obj = create_provider(provider)
+    provider_obj = create_provider(provider, model_name)
     memory = WorkingMemory()
 
     all_configs: list = []

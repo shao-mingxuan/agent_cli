@@ -5,9 +5,12 @@ from rich.rule import Rule
 from rich.text import Text
 
 from ..agent.orchestrator import Orchestrator
+from ..providers.glm import ZhipuProvider
+from ..providers.openai_compat import OpenAICompatProvider
 from ..skills.loader import load_skill_registry
 from .approval import full_approval_callback, sensitive_approval_callback
 from .display import handle_events, print_config
+from .factory import create_provider
 from .utils import console, make_tag
 
 
@@ -49,6 +52,24 @@ def read_multiline_input() -> str:
 
 def run_repl(agent: Orchestrator) -> None:
     """启动 REPL 交互循环。"""
+    import sys
+
+    if not sys.stdin.isatty():
+        console.print(
+            "[bold red]错误：当前终端不是交互式 TTY，无法启动对话。[/bold red]"
+        )
+        console.print(
+            "[dim]提示：在 macOS 上通过 `make` 运行可能会关闭 stdin。"
+            "请直接运行命令：[/dim]"
+        )
+        console.print(
+            "[dim]  venv/bin/agent chat --mcp-config ./mcp.json[/dim]"
+        )
+        console.print(
+            "[dim]或在 Makefile 中使用 `script -q /dev/null` 包装命令。[/dim]"
+        )
+        return
+
     console.print("Agent CLI 已启动，输入 /help 查看命令，/exit 退出。")
     console.print(Rule(style="dim"))
 
@@ -71,6 +92,7 @@ def run_repl(agent: Orchestrator) -> None:
                 "  /exit, /quit  - 退出对话\n"
                 "  /clear        - 清空对话历史\n"
                 "  /config       - 查看当前配置信息\n"
+                "  /model <name> - 切换当前模型\n"
                 "  /tools        - 列出所有已注册工具\n"
                 "  /skills       - 列出所有可用技能\n"
                 "  /skill <name> - 切换到指定技能\n"
@@ -145,6 +167,34 @@ def run_repl(agent: Orchestrator) -> None:
         elif cmd == "/clear":
             agent.reset()
             console.print("[dim]对话历史已清空。[/dim]")
+            continue
+        elif cmd.startswith("/model"):
+            name = user_input.strip()[6:].strip()
+            if not name:
+                current = getattr(agent.provider, "model_name", "unknown")
+                console.print(f"[dim]当前模型: {current}。用法: /model <模型名>[/dim]")
+                continue
+            wants_glm = name.startswith("glm-")
+            is_glm = isinstance(agent.provider, ZhipuProvider)
+            try:
+                if wants_glm != is_glm:
+                    new_provider = create_provider(
+                        "glm" if wants_glm else "openai_compat"
+                    )
+                    agent.set_provider(new_provider, model_name=name)
+                    current = getattr(agent.provider, "model_name", "unknown")
+                    base_url = getattr(agent.provider, "base_url", "")
+                    console.print(
+                        f"[dim]已切换到接口: {base_url}，模型: {current}[/dim]"
+                    )
+                else:
+                    agent.set_model(name)
+                    current = getattr(agent.provider, "model_name", "unknown")
+                    console.print(f"[dim]已切换到模型: {current}[/dim]")
+            except Exception as e:
+                console.print(f"[bold red]切换模型失败: {e}[/bold red]")
+                continue
+            console.print(Rule(style="dim"))
             continue
         elif cmd.startswith("/approve"):
             flag = user_input.strip()[8:].strip().lower()

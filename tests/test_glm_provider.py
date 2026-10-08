@@ -15,7 +15,7 @@ class TestZhipuProvider:
         monkeypatch.delenv("GLM_MODEL", raising=False)
         provider = ZhipuProvider()
         assert provider.base_url == "https://open.bigmodel.cn/api/paas/v4"
-        assert provider.model_name == "glm-4-flash"
+        assert provider.model_name == "glm-5.3"
 
     def test_env_override(self, monkeypatch):
         monkeypatch.setenv("ZHIPUAI_API_KEY", "test-key")
