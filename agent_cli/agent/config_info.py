@@ -46,6 +46,7 @@ def build_config_info(orch) -> dict[str, Any]:
             if orch._approval_callback is not builtin_approval_callback
             else "sensitive"
         ),
+        "react_loop": "manual" if orch._use_manual_react else "langgraph",
         "max_messages": orch.memory.max_messages,
         "max_tokens": orch.memory.max_tokens,
         "compression_enabled": orch.memory.compression_enabled,

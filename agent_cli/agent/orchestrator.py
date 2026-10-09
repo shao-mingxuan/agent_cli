@@ -49,6 +49,7 @@ class Orchestrator:
         enable_compression: bool = True,
         enable_long_term_memory: bool = False,
         db_path: str | None = None,
+        use_manual_react: bool = False,
     ):
         self.provider = provider
         self.model = provider.get_model()
@@ -77,6 +78,8 @@ class Orchestrator:
             else builtin_approval_callback
         )
         self._thread_id = "default"
+        self._use_manual_react = use_manual_react
+        self._react_max_steps = 8
 
         self.registry = create_default_registry()
 
@@ -217,6 +220,15 @@ class Orchestrator:
         )
         self._apply_skill()
 
+    def set_react_mode(self, enable: bool | None = None) -> bool:
+        """切换 ReAct 循环实现：True=手动循环，False=LangGraph create_agent。
+
+        返回切换后的模式。
+        """
+        if enable is not None:
+            self._use_manual_react = bool(enable)
+        return self._use_manual_react
+
     def run_stream(self, user_input: str) -> Iterator[AgentEvent]:
         """逐步 yield guard/thinking/think/act/token/respond/approve 事件。
 
@@ -261,7 +273,12 @@ class Orchestrator:
         config = {"configurable": {"thread_id": self._thread_id}}
         pending_tool_calls: dict[str, dict] = {}
 
-        state = yield from run_stream_loop(self, config, pending_tool_calls)
+        if self._use_manual_react:
+            from .strategies.react import manual_react_loop
+
+            state = yield from manual_react_loop(self, config, pending_tool_calls)
+        else:
+            state = yield from run_stream_loop(self, config, pending_tool_calls)
         yield from finalize_response(self, user_input, state)
 
     def run(self, user_input: str) -> AgentEvent:

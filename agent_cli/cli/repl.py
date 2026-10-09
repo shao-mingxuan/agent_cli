@@ -93,6 +93,7 @@ def run_repl(agent: Orchestrator) -> None:
                 "  /clear        - 清空对话历史\n"
                 "  /config       - 查看当前配置信息\n"
                 "  /model <name> - 切换当前模型\n"
+                "  /react on|off - 切换手动 ReAct / LangGraph 循环\n"
                 "  /tools        - 列出所有已注册工具\n"
                 "  /skills       - 列出所有可用技能\n"
                 "  /skill <name> - 切换到指定技能\n"
@@ -194,6 +195,22 @@ def run_repl(agent: Orchestrator) -> None:
             except Exception as e:
                 console.print(f"[bold red]切换模型失败: {e}[/bold red]")
                 continue
+            console.print(Rule(style="dim"))
+            continue
+        elif cmd.startswith("/react"):
+            flag = user_input.strip()[6:].strip().lower()
+            if flag in ("on", "1", "true"):
+                agent.set_react_mode(True)
+                console.print("[dim]ReAct 循环: 手动模式已启用[/dim]")
+            elif flag in ("off", "0", "false"):
+                agent.set_react_mode(False)
+                console.print("[dim]ReAct 循环: LangGraph 模式已启用[/dim]")
+            else:
+                mode = agent.get_config_info().get("react_loop", "langgraph")
+                status = "手动 ReAct" if mode == "manual" else "LangGraph"
+                console.print(
+                    f"[dim]当前循环: {status}。用法: /react on|off[/dim]"
+                )
             console.print(Rule(style="dim"))
             continue
         elif cmd.startswith("/approve"):

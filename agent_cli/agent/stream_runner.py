@@ -152,10 +152,9 @@ def run_stream_loop(orch, config: dict, pending_tool_calls: dict):
                 if aborted:
                     break
         except Exception as e:
-            yield AgentEvent(
-                step=StepType.RESPOND,
-                content=f"[模型调用失败] {type(e).__name__}: {e}",
-            )
+            error_text = f"[模型调用失败] {type(e).__name__}: {e}"
+            respond_chunks.append(error_text)
+            yield AgentEvent(step=StepType.RESPOND, content=error_text)
             aborted = True
             break
 

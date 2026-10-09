@@ -207,7 +207,9 @@ def print_config(agent: Orchestrator) -> None:
     console.print(f"  接口: {cfg['base_url']}")
     mode = cfg.get("approval_mode", "sensitive")
     approval_status = "全部审批" if mode == "full" else "敏感审批"
+    loop = "手动 ReAct" if cfg.get("react_loop") == "manual" else "LangGraph"
     console.print(f"  审批: {approval_status}")
+    console.print(f"  ReAct 循环: {loop}")
     console.print()
 
     active_skill = cfg.get("skill")

@@ -13,7 +13,7 @@ def finalize_response(orch, user_input: str, state: dict):
     - memory_len_before: 循环前消息数（用于 rollback）
     """
     full_response = "".join(state["respond_chunks"])
-    if state["aborted"]:
+    if state["aborted"] and not full_response:
         full_response = (
             f"工具连续调用失败 {state['consecutive_failures']} 次，已中止执行。"
             "请检查 MCP 工具配置或参数是否正确，然后重试。"
