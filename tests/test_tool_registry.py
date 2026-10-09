@@ -97,9 +97,9 @@ class TestToolRegistry:
 
 
 class TestCreateDefaultRegistry:
-    def test_has_5_tools(self):
+    def test_has_11_tools(self):
         reg = create_default_registry()
-        assert len(reg.get_all()) == 5
+        assert len(reg.get_all()) == 11
 
     def test_tool_names(self):
         reg = create_default_registry()
@@ -109,6 +109,12 @@ class TestCreateDefaultRegistry:
         assert "detect_violation" in names
         assert "scan_file" in names
         assert "validate_input" in names
+        assert "read_file" in names
+        assert "write_file" in names
+        assert "edit_file" in names
+        assert "list_directory" in names
+        assert "search_files" in names
+        assert "run_command" in names
 
     def test_sources_all_builtin(self):
         reg = create_default_registry()

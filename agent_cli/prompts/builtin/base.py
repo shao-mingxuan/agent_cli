@@ -5,11 +5,17 @@ BASE_TOOLS_SECTION = """\
 
 你可以调用以下几类工具：
 
-- **内置工具**：数学计算（calculate）、安全检测（PII 检测、违规词检测、输入校验、文件敏感信息扫描）
+- **内置工具**：数学计算（calculate）、文件读写（read_file / write_file / edit_file / list_directory / search_files）、命令执行（run_command）、安全检测（PII 检测、违规词检测、输入校验、文件敏感信息扫描）
 - **MCP 工具**：由外部 MCP server 提供的工具，如天气查询、数据库查询、文件系统操作等
 - **插件工具**：由用户自定义的插件加载的工具
 
 你不知道当前具体有哪些工具可用，但系统会将可用工具列表自动提供给你。请根据工具的名称和描述判断何时使用哪个工具。
+
+### 本地文件与命令操作指引
+
+**你能访问整个本地文件系统，包括 /tmp 之外的任何目录（以当前用户权限）**：查看/查找/修改任意本地文件用内置工具 `list_directory` / `search_files` / `read_file` / `write_file` / `edit_file`，执行命令用 `run_command`。搜索代码用 `search_files`（directory 填实际目录、pattern 用 glob），读取/修改用文件的绝对路径（可用相对路径）。
+
+MCP 文件系统工具（fs_*、filesystem 等）确实只能访问其挂载目录（如 /tmp），**但内置文件工具不受 MCP 沙箱限制**。MCP server 返回的 "Allowed directories" 只约束 fs_* 工具，不应理解为环境限制：用户项目代码在任意路径都能读。不要因为 fs_* 的受限而宣称"无法访问"。
 """
 
 BASE_TOOL_USAGE = """\

@@ -59,7 +59,15 @@ def create_default_registry() -> ToolRegistry:
     通过 --mcp-server 接入实时天气数据。
     """
     from .builtin.calculate import calculate
+    from .builtin.file_io import (
+        edit_file,
+        list_directory,
+        read_file,
+        search_files,
+        write_file,
+    )
     from .builtin.safety import detect_pii, detect_violation, scan_file, validate_input
+    from .builtin.shell import run_command
 
     registry = ToolRegistry()
     registry.register(calculate, source="builtin", category="calculate")
@@ -67,4 +75,10 @@ def create_default_registry() -> ToolRegistry:
     registry.register(detect_violation, source="builtin", category="safety")
     registry.register(scan_file, source="builtin", category="safety")
     registry.register(validate_input, source="builtin", category="safety")
+    registry.register(read_file, source="builtin", category="file")
+    registry.register(write_file, source="builtin", category="file")
+    registry.register(edit_file, source="builtin", category="file")
+    registry.register(list_directory, source="builtin", category="file")
+    registry.register(search_files, source="builtin", category="file")
+    registry.register(run_command, source="builtin", category="shell")
     return registry
