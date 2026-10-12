@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock
 
+import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
 from agent_cli.agent.types import StepType
@@ -145,3 +146,51 @@ class TestSetReactMode:
         _ready_model(orch, [AIMessage(content="manual")])
         events = list(orch.run_stream("hi"))
         assert "manual" in events[-1].content
+
+    def test_set_strategy(self, make_orchestrator):
+        orch, _ = make_orchestrator()
+        assert orch.set_strategy("plan_execute") == "plan_execute"
+        assert orch.get_config_info()["react_loop"] == "plan_execute"
+        assert orch.set_strategy("manual") == "manual"
+        assert orch._use_manual_react is True
+        with pytest.raises(ValueError):
+            orch.set_strategy("unknown")
+
+
+class TestPlanExecute:
+    def test_plan_then_respond(self, make_orchestrator):
+        orch, _ = make_orchestrator(strategy="plan_execute")
+        orch.model.invoke.side_effect = [AIMessage(content="1. 分析\n2. 回答")]
+        bound = MagicMock()
+        bound.invoke.side_effect = [AIMessage(content="完成")]
+        orch.model.bind_tools.return_value = bound
+        events = list(orch.run_stream("帮我办件事"))
+        plan_events = [e for e in events if e.metadata.get("plan")]
+        assert len(plan_events) == 1
+        assert "1. 分析" in plan_events[0].content
+        assert "完成" in events[-1].content
+
+    def test_plan_then_tool_roundtrip(self, make_orchestrator):
+        orch, _ = make_orchestrator(strategy="plan_execute")
+        orch.model.invoke.side_effect = [AIMessage(content="计划：读取并计算")]
+        plan_tc = AIMessage(
+            content="", tool_calls=[_calc_tc(expr="1+1", tc_id="tp1")]
+        )
+        bound = MagicMock()
+        bound.invoke.side_effect = [plan_tc, AIMessage(content="答案是 2")]
+        orch.model.bind_tools.return_value = bound
+        events = list(orch.run_stream("计算"))
+        assert any(e.step == StepType.ACT for e in events)
+        assert "答案是 2" in events[-1].content
+        tool_results = [
+            m
+            for m in orch.memory.get_messages()
+            if isinstance(m, ToolMessage) and "计算结果" in m.content
+        ]
+        assert len(tool_results) == 1
+
+    def test_plan_error_becomes_respond(self, make_orchestrator):
+        orch, _ = make_orchestrator(strategy="plan_execute")
+        orch.model.invoke.side_effect = RuntimeError("plan failed")
+        events = list(orch.run_stream("hi"))
+        assert "[模型调用失败]" in events[-1].content

@@ -50,6 +50,7 @@ class Orchestrator:
         enable_long_term_memory: bool = False,
         db_path: str | None = None,
         use_manual_react: bool = False,
+        strategy: str | None = None,
     ):
         self.provider = provider
         self.model = provider.get_model()
@@ -80,6 +81,12 @@ class Orchestrator:
         self._thread_id = "default"
         self._use_manual_react = use_manual_react
         self._react_max_steps = 8
+        valid_strategies = ("langgraph", "manual", "plan_execute")
+        if strategy is not None and strategy not in valid_strategies:
+            raise ValueError(f"未知策略: {strategy}，可选 {valid_strategies}")
+        self._strategy = (
+            strategy if strategy is not None else ("manual" if use_manual_react else "langgraph")
+        )
 
         self.registry = create_default_registry()
 
@@ -226,8 +233,21 @@ class Orchestrator:
         返回切换后的模式。
         """
         if enable is not None:
+            self._strategy = "manual" if enable else "langgraph"
             self._use_manual_react = bool(enable)
         return self._use_manual_react
+
+    def set_strategy(self, name: str) -> str:
+        """切换 Agent 循环策略：langgraph / manual / plan_execute。
+
+        返回切换后的策略名。
+        """
+        valid_strategies = ("langgraph", "manual", "plan_execute")
+        if name not in valid_strategies:
+            raise ValueError(f"未知策略: {name}，可选 {valid_strategies}")
+        self._strategy = name
+        self._use_manual_react = name == "manual"
+        return self._strategy
 
     def run_stream(self, user_input: str) -> Iterator[AgentEvent]:
         """逐步 yield guard/thinking/think/act/token/respond/approve 事件。
@@ -273,10 +293,14 @@ class Orchestrator:
         config = {"configurable": {"thread_id": self._thread_id}}
         pending_tool_calls: dict[str, dict] = {}
 
-        if self._use_manual_react:
+        if self._strategy == "manual":
             from .strategies.react import manual_react_loop
 
             state = yield from manual_react_loop(self, config, pending_tool_calls)
+        elif self._strategy == "plan_execute":
+            from .strategies.plan_execute import run_plan_execute_loop
+
+            state = yield from run_plan_execute_loop(self, config, pending_tool_calls)
         else:
             state = yield from run_stream_loop(self, config, pending_tool_calls)
         yield from finalize_response(self, user_input, state)

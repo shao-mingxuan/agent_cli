@@ -1,5 +1,6 @@
 """L0 CLI - 终端展示。"""
 
+import queue
 import shutil
 import sys
 import threading
@@ -146,8 +147,15 @@ def print_guard(event):
 
 
 def print_think(event, display: TypewriterDisplay):
-    """打印 Think 步骤（工具调用决定）。"""
+    """打印 Think 步骤（工具调用决定/计划）。"""
     display.stop_spinner()
+    plan = event.metadata.get("plan")
+    if plan:
+        console.print(Text("  ⠂Plan    ", style="bold magenta"))
+        for line in plan.splitlines():
+            console.print(Text(f"          {line}", style="dim"))
+        console.print()
+        return
     details = event.metadata.get("tool_details", [])
     if not details:
         return
@@ -207,7 +215,13 @@ def print_config(agent: Orchestrator) -> None:
     console.print(f"  接口: {cfg['base_url']}")
     mode = cfg.get("approval_mode", "sensitive")
     approval_status = "全部审批" if mode == "full" else "敏感审批"
-    loop = "手动 ReAct" if cfg.get("react_loop") == "manual" else "LangGraph"
+    loop_labels = {
+        "manual": "手动 ReAct",
+        "plan_execute": "Plan-Execute",
+        "langgraph": "LangGraph",
+    }
+    loop_name = cfg.get("react_loop", "langgraph")
+    loop = loop_labels.get(loop_name, loop_name)
     console.print(f"  审批: {approval_status}")
     console.print(f"  ReAct 循环: {loop}")
     console.print()
@@ -252,32 +266,95 @@ def print_config(agent: Orchestrator) -> None:
     console.print(Rule(style="dim"))
 
 
+class _StreamFeed:
+    """把 agent.run_stream 放到后台线程，事件经队列交给主线程消费。
+
+    这样即使 LLM 请求长时间阻塞（首 token 慢/挂起），主线程仍能每 50ms
+    轮询 ESC/Ctrl+C，实现立即打断与一次退出的可选关闭。worker 为 daemon，
+    进程退出时自动终止，避免残留线程阻塞解释器关闭。
+    """
+
+    DONE = "done"
+    ERROR = "error"
+    EVENT = "event"
+
+    def __init__(self, agent: Orchestrator, user_input: str):
+        self._q: queue.Queue = queue.Queue()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._agent = agent
+        self._user_input = user_input
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        try:
+            for event in self._agent.run_stream(self._user_input):
+                if self._stop.is_set():
+                    break
+                self._q.put((self.EVENT, event))
+        except Exception as e:
+            self._q.put((self.ERROR, e))
+        finally:
+            self._q.put((self.DONE, None))
+
+    def next_item(self, timeout: float) -> tuple[str, object] | None:
+        """从队列取一个事件；超时返回 None。"""
+        try:
+            return self._q.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=0.5)
+
+
 def handle_events(agent: Orchestrator, user_input: str):
     """处理 agent 事件流，带 spinner 和打字机效果。
 
-    支持按 ESC 打断：监听期间按 ESC 会停止生成并清理显示。
-    Ctrl+C 由 CancelController 转为主线程 KeyboardInterrupt，用于退出程序。
+    agent.run_stream 在后台线程运行，事件经队列传给主线程。主循环不断
+    轮询队列与键盘，因此 LLM 请求即使阻塞也能：
+    - ESC      → 立即打断当前回复，回到 REPL（不退出）。
+    - Ctrl+C   → 向主线程抛 KeyboardInterrupt，一次性退出程序。
     """
     display = TypewriterDisplay()
     controller = CancelController()
     controller.start()
+    feed = _StreamFeed(agent, user_input)
+    feed.start()
     resume_esc = False
     finished = False
+    done = False
+    interrupted_by_esc = False
     try:
-        for event in agent.run_stream(user_input):
+        while True:
             if controller.is_cancelled():
-                display.abort()
-                console.print(
-                    Text.assemble(
-                        ("  ⠂Interrupted  ", "bold red"),
-                        ("已打断当前回复（按 ESC）", "dim"),
-                    )
-                )
+                interrupted_by_esc = True
                 break
             if resume_esc:
                 controller.start()
                 resume_esc = False
 
+            item = feed.next_item(timeout=0.05)
+            if item is None:
+                continue
+            kind, payload = item
+
+            if kind == _StreamFeed.DONE:
+                done = True
+                break
+            if kind == _StreamFeed.ERROR:
+                display.abort()
+                console.print(
+                    f"[bold red][模型调用失败][/bold red] {payload}"[:1200]
+                )
+                break
+
+            event = payload
             if event.step == StepType.GUARD:
                 print_guard(event)
             elif event.step == StepType.THINKING:
@@ -308,5 +385,14 @@ def handle_events(agent: Orchestrator, user_input: str):
                     console.print()
     finally:
         controller.stop()
+        feed.stop()
         if not finished:
             display.abort()
+
+    if interrupted_by_esc:
+        console.print(
+            Text.assemble(
+                ("  ⠂Interrupted  ", "bold red"),
+                ("已打断当前回复（按 ESC）", "dim"),
+            )
+        )
