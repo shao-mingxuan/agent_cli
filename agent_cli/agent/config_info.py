@@ -41,12 +41,18 @@ def build_config_info(orch) -> dict[str, Any]:
         "tools_by_source": tools_by_source,
         "mcp_tools": mcp_tools,
         "skill": skill_info,
-        "approval_mode": (
-            "full"
-            if orch._approval_callback is not builtin_approval_callback
-            else "sensitive"
+        "approval_mode": getattr(
+            orch,
+            "_approval_mode",
+            (
+                "full"
+                if orch._approval_callback is not builtin_approval_callback
+                else "sensitive"
+            ),
         ),
         "react_loop": getattr(orch, "_strategy", "langgraph"),
+        "verify_enabled": bool(getattr(orch, "_enable_verify", False)),
+        "verify_max_rounds": getattr(orch, "_verify_max_rounds", 2),
         "max_messages": orch.memory.max_messages,
         "max_tokens": orch.memory.max_tokens,
         "compression_enabled": orch.memory.compression_enabled,

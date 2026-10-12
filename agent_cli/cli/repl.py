@@ -10,7 +10,11 @@ from ..providers.deepseek import DeepSeekProvider
 from ..providers.glm import ZhipuProvider
 from ..providers.openai_compat import OpenAICompatProvider
 from ..skills.loader import load_skill_registry
-from .approval import full_approval_callback, sensitive_approval_callback
+from .approval import (
+    auto_approval_callback,
+    full_approval_callback,
+    sensitive_approval_callback,
+)
 from .display import handle_events, print_config
 from .factory import create_provider
 from .utils import console, make_tag
@@ -95,12 +99,13 @@ def run_repl(agent: Orchestrator) -> None:
                 "  /clear        - 清空对话历史\n"
                 "  /config       - 查看当前配置信息\n"
                 "  /model <name> - 切换当前模型\n"
-                "  /strategy <name> - langgraph / manual / plan_execute\n"
                 "  /react on|off - 切换手动 ReAct / LangGraph 循环\n"
+                "  /strategy <name> - langgraph / manual / plan_execute\n"
+                "  /verify on|off - 完成度评估闭环（未达成自动继续）\n"
                 "  /tools        - 列出所有已注册工具\n"
                 "  /skills       - 列出所有可用技能\n"
                 "  /skill <name> - 切换到指定技能\n"
-                "  /approve on|off - 全部审批 / 仅敏感审批\n"
+                "  /approve on|off|auto - 全部审批 / 仅敏感审批 / 自动审批\n"
                 "  /help         - 显示帮助"
                 "[/dim]"
             )
@@ -245,17 +250,41 @@ def run_repl(agent: Orchestrator) -> None:
             continue
         elif cmd.startswith("/approve"):
             flag = user_input.strip()[8:].strip().lower()
-            if flag == "on":
-                agent.set_approval_callback(full_approval_callback)
+            if flag in ("on", "1", "true"):
+                agent.set_approval_callback(full_approval_callback, mode="full")
                 console.print("[dim]审批模式: 全部工具需手动确认[/dim]")
-            elif flag == "off":
-                agent.set_approval_callback(sensitive_approval_callback)
+            elif flag in ("off", "0", "false"):
+                agent.set_approval_callback(sensitive_approval_callback, mode="sensitive")
                 console.print("[dim]审批模式: 仅敏感工具需手动确认[/dim]")
+            elif flag == "auto":
+                agent.set_approval_callback(auto_approval_callback, mode="auto")
+                console.print("[dim]审批模式: 自动审批（所有工具免确认）[/dim]")
             else:
                 mode = agent.get_config_info().get("approval_mode", "sensitive")
-                status = "全部审批" if mode == "full" else "敏感审批"
+                status = {
+                    "full": "全部审批",
+                    "sensitive": "敏感审批",
+                    "auto": "自动审批",
+                }.get(mode, mode)
                 console.print(
-                    f"[dim]当前审批状态: {status}。用法: /approve on|off[/dim]"
+                    f"[dim]当前审批状态: {status}。用法: /approve on|off|auto[/dim]"
+                )
+            console.print(Rule(style="dim"))
+            continue
+        elif cmd.startswith("/verify"):
+            flag = user_input.strip()[7:].strip().lower()
+            if flag in ("on", "1", "true"):
+                agent.set_verify(True)
+                console.print("[dim]完成度评估: 已启用（未达成自动继续）[/dim]")
+            elif flag in ("off", "0", "false"):
+                agent.set_verify(False)
+                console.print("[dim]完成度评估: 已关闭[/dim]")
+            else:
+                enabled = agent.get_config_info().get("verify_enabled", False)
+                rounds = agent.get_config_info().get("verify_max_rounds", 2)
+                status = f"开启（最多 {rounds} 轮）" if enabled else "关闭"
+                console.print(
+                    f"[dim]完成度评估: {status}。用法: /verify on|off[/dim]"
                 )
             console.print(Rule(style="dim"))
             continue

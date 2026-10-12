@@ -47,6 +47,14 @@ def full_approval_callback(tool_calls: list[dict]) -> list[bool]:
     return results
 
 
+def auto_approval_callback(tool_calls: list[dict]) -> list[bool]:
+    """自动审批回调：所有工具调用一律通过（自主模式，无需确认）。
+
+    风险由前/后置安全 guard 与敏感工具检测兜底；仅建议在可信场景使用。
+    """
+    return [True] * len(tool_calls)
+
+
 def sensitive_approval_callback(tool_calls: list[dict]) -> list[bool]:
     """默认审批回调：敏感工具需用户确认，非敏感工具自动批准。"""
     results = []

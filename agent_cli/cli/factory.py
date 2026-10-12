@@ -2,6 +2,7 @@
 
 import json
 import os
+from typing import Any
 
 import click
 
@@ -16,7 +17,11 @@ from ..providers.glm import ZhipuProvider
 from ..providers.openai_compat import OpenAICompatProvider
 from ..skills.loader import load_skill_registry
 from ..tools.loader import load_plugins
-from .approval import full_approval_callback, sensitive_approval_callback
+from .approval import (
+    auto_approval_callback,
+    full_approval_callback,
+    sensitive_approval_callback,
+)
 from .utils import console
 
 # 未显式传入 --mcp-config 时，自动发现项目根目录下的默认 MCP 配置文件。
@@ -45,6 +50,10 @@ def create_orchestrator(
     skill_name: str | None = None,
     skills_dir: str = "./skills",
     approval: bool = False,
+    auto_approve: bool = False,
+    strategy: str | None = None,
+    enable_verify: bool = False,
+    verify_max_rounds: int = 2,
     max_messages: int | None = None,
     max_tokens: int | None = None,
     no_compress: bool = False,
@@ -108,7 +117,15 @@ def create_orchestrator(
             f"[dim]技能 '{active_skill.name}' 已激活: {active_skill.description}[/dim]"
         )
 
-    approval_cb = full_approval_callback if approval else sensitive_approval_callback
+    if auto_approve:
+        approval_mode = "auto"
+        approval_cb: Any = auto_approval_callback
+    elif approval:
+        approval_mode = "full"
+        approval_cb = full_approval_callback
+    else:
+        approval_mode = "sensitive"
+        approval_cb = sensitive_approval_callback
 
     try:
         return Orchestrator(
@@ -119,6 +136,10 @@ def create_orchestrator(
             extra_tool_infos=plugin_infos,
             skill=active_skill,
             approval_callback=approval_cb,
+            approval_mode=approval_mode,
+            strategy=strategy,
+            enable_verify=enable_verify,
+            verify_max_rounds=verify_max_rounds,
             max_messages=max_messages,
             max_tokens=max_tokens,
             enable_compression=not no_compress,

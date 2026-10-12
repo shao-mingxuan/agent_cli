@@ -147,13 +147,22 @@ def print_guard(event):
 
 
 def print_think(event, display: TypewriterDisplay):
-    """打印 Think 步骤（工具调用决定/计划）。"""
+    """打印 Think 步骤（工具调用决定/计划/评估指令）。"""
     display.stop_spinner()
     plan = event.metadata.get("plan")
     if plan:
         console.print(Text("  ⠂Plan    ", style="bold magenta"))
         for line in plan.splitlines():
             console.print(Text(f"          {line}", style="dim"))
+        console.print()
+        return
+    if event.metadata.get("phase") == "verify":
+        reason = event.metadata.get("reason", "")
+        console.print(Text("  ⠂Verify  ", style="bold cyan"))
+        if reason:
+            console.print(Text(f"          原因: {reason}", style="dim"))
+        if event.content:
+            console.print(Text(f"          下一步: {event.content}", style="cyan"))
         console.print()
         return
     details = event.metadata.get("tool_details", [])
@@ -214,7 +223,11 @@ def print_config(agent: Orchestrator) -> None:
     console.print(f"  模型: {cfg['model']}")
     console.print(f"  接口: {cfg['base_url']}")
     mode = cfg.get("approval_mode", "sensitive")
-    approval_status = "全部审批" if mode == "full" else "敏感审批"
+    approval_status = {
+        "full": "全部审批",
+        "sensitive": "敏感审批",
+        "auto": "自动审批（免确认）",
+    }.get(mode, mode)
     loop_labels = {
         "manual": "手动 ReAct",
         "plan_execute": "Plan-Execute",
@@ -222,8 +235,14 @@ def print_config(agent: Orchestrator) -> None:
     }
     loop_name = cfg.get("react_loop", "langgraph")
     loop = loop_labels.get(loop_name, loop_name)
+    verify_status = (
+        f"开启（最多 {cfg.get('verify_max_rounds', 2)} 轮）"
+        if cfg.get("verify_enabled")
+        else "关闭"
+    )
     console.print(f"  审批: {approval_status}")
     console.print(f"  ReAct 循环: {loop}")
+    console.print(f"  完成度评估: {verify_status}")
     console.print()
 
     active_skill = cfg.get("skill")

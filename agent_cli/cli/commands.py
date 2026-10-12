@@ -23,6 +23,25 @@ from .repl import run_repl
 @click.option("--skill", "skill_name", default=None, help="激活指定技能")
 @click.option("--approve", is_flag=True, default=False, help="启用工具调用审批")
 @click.option(
+    "--auto-approve", is_flag=True, default=False, help="自动审批：所有工具调用免确认（自主模式）"
+)
+@click.option(
+    "--strategy",
+    type=click.Choice(["langgraph", "manual", "plan_execute"]),
+    default=None,
+    help="Agent 循环策略：langgraph（默认）/ manual / plan_execute",
+)
+@click.option(
+    "--verify", is_flag=True, default=False, help="启用完成度评估：执行后检查目标是否达成，未达成则继续"
+)
+@click.option(
+    "--verify-rounds",
+    "verify_max_rounds",
+    default=2,
+    type=int,
+    help="完成度评估最大迭代轮数（默认 2）",
+)
+@click.option(
     "--max-messages",
     default=None,
     type=int,
@@ -52,6 +71,10 @@ def chat(
     plugins_dir,
     skill_name,
     approve,
+    auto_approve,
+    strategy,
+    verify,
+    verify_max_rounds,
     max_messages,
     max_tokens,
     no_compress,
@@ -68,6 +91,10 @@ def chat(
         provider=provider,
         model_name=model_name,
         approval=approve,
+        auto_approve=auto_approve,
+        strategy=strategy,
+        enable_verify=verify,
+        verify_max_rounds=verify_max_rounds,
         max_messages=max_messages,
         max_tokens=max_tokens,
         no_compress=no_compress,
@@ -94,6 +121,25 @@ def chat(
 @click.option("--plugins-dir", default="./plugins", help="插件目录路径")
 @click.option("--skill", "skill_name", default=None, help="激活指定技能")
 @click.option("--approve", is_flag=True, default=False, help="启用工具调用审批")
+@click.option(
+    "--auto-approve", is_flag=True, default=False, help="自动审批：所有工具调用免确认（自主模式）"
+)
+@click.option(
+    "--strategy",
+    type=click.Choice(["langgraph", "manual", "plan_execute"]),
+    default=None,
+    help="Agent 循环策略：langgraph（默认）/ manual / plan_execute",
+)
+@click.option(
+    "--verify", is_flag=True, default=False, help="启用完成度评估：执行后检查目标是否达成，未达成则继续"
+)
+@click.option(
+    "--verify-rounds",
+    "verify_max_rounds",
+    default=2,
+    type=int,
+    help="完成度评估最大迭代轮数（默认 2）",
+)
 @click.option(
     "--max-messages",
     default=None,
@@ -125,6 +171,10 @@ def run(
     plugins_dir,
     skill_name,
     approve,
+    auto_approve,
+    strategy,
+    verify,
+    verify_max_rounds,
     max_messages,
     max_tokens,
     no_compress,
@@ -141,6 +191,10 @@ def run(
         provider=provider,
         model_name=model_name,
         approval=approve,
+        auto_approve=auto_approve,
+        strategy=strategy,
+        enable_verify=verify,
+        verify_max_rounds=verify_max_rounds,
         max_messages=max_messages,
         max_tokens=max_tokens,
         no_compress=no_compress,
@@ -166,6 +220,25 @@ def run(
 @click.option("--plugins-dir", default="./plugins", help="插件目录路径")
 @click.option("--skill", "skill_name", default=None, help="激活指定技能")
 @click.option("--approve", is_flag=True, default=False, help="启用工具调用审批")
+@click.option(
+    "--auto-approve", is_flag=True, default=False, help="自动审批：所有工具调用免确认（自主模式）"
+)
+@click.option(
+    "--strategy",
+    type=click.Choice(["langgraph", "manual", "plan_execute"]),
+    default=None,
+    help="Agent 循环策略：langgraph（默认）/ manual / plan_execute",
+)
+@click.option(
+    "--verify", is_flag=True, default=False, help="启用完成度评估：执行后检查目标是否达成，未达成则继续"
+)
+@click.option(
+    "--verify-rounds",
+    "verify_max_rounds",
+    default=2,
+    type=int,
+    help="完成度评估最大迭代轮数（默认 2）",
+)
 @click.option(
     "--max-messages",
     default=None,
@@ -196,6 +269,10 @@ def config(
     plugins_dir,
     skill_name,
     approve,
+    auto_approve,
+    strategy,
+    verify,
+    verify_max_rounds,
     max_messages,
     max_tokens,
     no_compress,
@@ -212,6 +289,10 @@ def config(
         provider=provider,
         model_name=model_name,
         approval=approve,
+        auto_approve=auto_approve,
+        strategy=strategy,
+        enable_verify=verify,
+        verify_max_rounds=verify_max_rounds,
         max_messages=max_messages,
         max_tokens=max_tokens,
         no_compress=no_compress,
