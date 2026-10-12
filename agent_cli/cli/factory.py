@@ -9,7 +9,9 @@ from ..agent.orchestrator import Orchestrator
 from ..mcp import MCPRegistry, load_mcp_servers_from_config, parse_mcp_server_spec
 from ..memory.working import WorkingMemory
 from ..prompts.builtin.default import DEFAULT_SYSTEM_PROMPT
+from ..providers.anthropic import AnthropicProvider
 from ..providers.base import BaseProvider
+from ..providers.deepseek import DeepSeekProvider
 from ..providers.glm import ZhipuProvider
 from ..providers.openai_compat import OpenAICompatProvider
 from ..skills.loader import load_skill_registry
@@ -17,14 +19,21 @@ from ..tools.loader import load_plugins
 from .approval import full_approval_callback, sensitive_approval_callback
 from .utils import console
 
+# 未显式传入 --mcp-config 时，自动发现项目根目录下的默认 MCP 配置文件。
+DEFAULT_MCP_CONFIG = "./mcp.json"
+
 
 def create_provider(
     provider_name: str | None = None, model_name: str | None = None
 ) -> BaseProvider:
-    """根据名称创建模型 Provider，支持 openai_compat / glm。"""
+    """根据名称创建模型 Provider，支持 openai_compat / glm / anthropic / deepseek。"""
     name = (provider_name or os.getenv("PROVIDER", "openai_compat")).strip().lower()
     if name in ("glm", "zhipu", "zhipuai", "bigmodel"):
         return ZhipuProvider(model_name=model_name)
+    if name in ("anthropic", "claude"):
+        return AnthropicProvider(model_name=model_name)
+    if name in ("deepseek", "ds"):
+        return DeepSeekProvider(model_name=model_name)
     return OpenAICompatProvider(model_name=model_name)
 
 
@@ -61,6 +70,18 @@ def create_orchestrator(
         except (FileNotFoundError, ValueError, json.JSONDecodeError) as e:
             console.print(
                 f"[bold red]MCP 配置文件加载失败 ({mcp_config}): {e}[/bold red]"
+            )
+    elif os.path.exists(DEFAULT_MCP_CONFIG):
+        try:
+            auto_configs = load_mcp_servers_from_config(DEFAULT_MCP_CONFIG)
+            all_configs.extend(auto_configs)
+            console.print(
+                f"[dim]已自动加载 MCP 配置: {DEFAULT_MCP_CONFIG} "
+                f"({len(auto_configs)} 个 server)[/dim]"
+            )
+        except (FileNotFoundError, ValueError, json.JSONDecodeError) as e:
+            console.print(
+                f"[bold red]MCP 配置文件加载失败 ({DEFAULT_MCP_CONFIG}): {e}[/bold red]"
             )
 
     mcp_registry = None

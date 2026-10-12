@@ -9,7 +9,7 @@ from .repl import run_repl
 
 
 @click.command()
-@click.option("--provider", default=None, help="模型供应商：openai_compat / glm")
+@click.option("--provider", default=None, help="模型供应商：openai_compat / glm / anthropic / deepseek")
 @click.option("--model", "model_name", default=None, help="模型名称，如 spark-x2.5-4b / glm-4-flash")
 @click.option("--system-prompt", "-s", default=None, help="自定义系统提示词")
 @click.option(
@@ -81,7 +81,7 @@ def chat(
 
 @click.command()
 @click.option("--prompt", "-p", required=True, help="要发送的问题")
-@click.option("--provider", default=None, help="模型供应商：openai_compat / glm")
+@click.option("--provider", default=None, help="模型供应商：openai_compat / glm / anthropic / deepseek")
 @click.option("--model", "model_name", default=None, help="模型名称，如 spark-x2.5-4b / glm-4-flash")
 @click.option("--system-prompt", "-s", default=None, help="自定义系统提示词")
 @click.option(
@@ -153,7 +153,7 @@ def run(
 
 
 @click.command()
-@click.option("--provider", default=None, help="模型供应商：openai_compat / glm")
+@click.option("--provider", default=None, help="模型供应商：openai_compat / glm / anthropic / deepseek")
 @click.option("--model", "model_name", default=None, help="模型名称，如 spark-x2.5-4b / glm-4-flash")
 @click.option("--system-prompt", "-s", default=None, help="自定义系统提示词")
 @click.option(

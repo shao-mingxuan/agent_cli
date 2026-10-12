@@ -5,6 +5,8 @@ from rich.rule import Rule
 from rich.text import Text
 
 from ..agent.orchestrator import Orchestrator
+from ..providers.anthropic import AnthropicProvider
+from ..providers.deepseek import DeepSeekProvider
 from ..providers.glm import ZhipuProvider
 from ..providers.openai_compat import OpenAICompatProvider
 from ..skills.loader import load_skill_registry
@@ -93,6 +95,7 @@ def run_repl(agent: Orchestrator) -> None:
                 "  /clear        - 清空对话历史\n"
                 "  /config       - 查看当前配置信息\n"
                 "  /model <name> - 切换当前模型\n"
+                "  /strategy <name> - langgraph / manual / plan_execute\n"
                 "  /react on|off - 切换手动 ReAct / LangGraph 循环\n"
                 "  /tools        - 列出所有已注册工具\n"
                 "  /skills       - 列出所有可用技能\n"
@@ -175,13 +178,20 @@ def run_repl(agent: Orchestrator) -> None:
                 current = getattr(agent.provider, "model_name", "unknown")
                 console.print(f"[dim]当前模型: {current}。用法: /model <模型名>[/dim]")
                 continue
-            wants_glm = name.startswith("glm-")
-            is_glm = isinstance(agent.provider, ZhipuProvider)
+            prefix_targets = [
+                ("glm-", "glm", ZhipuProvider),
+                ("claude-", "anthropic", AnthropicProvider),
+                ("deepseek-", "deepseek", DeepSeekProvider),
+            ]
+            target_provider = "openai_compat"
+            target_cls = OpenAICompatProvider
+            for prefix, pname, cls in prefix_targets:
+                if name.startswith(prefix):
+                    target_provider, target_cls = pname, cls
+                    break
             try:
-                if wants_glm != is_glm:
-                    new_provider = create_provider(
-                        "glm" if wants_glm else "openai_compat"
-                    )
+                if not isinstance(agent.provider, target_cls):
+                    new_provider = create_provider(target_provider)
                     agent.set_provider(new_provider, model_name=name)
                     current = getattr(agent.provider, "model_name", "unknown")
                     base_url = getattr(agent.provider, "base_url", "")
@@ -206,11 +216,31 @@ def run_repl(agent: Orchestrator) -> None:
                 agent.set_react_mode(False)
                 console.print("[dim]ReAct 循环: LangGraph 模式已启用[/dim]")
             else:
+                labels = {
+                    "manual": "手动 ReAct",
+                    "plan_execute": "Plan-Execute",
+                    "langgraph": "LangGraph",
+                }
                 mode = agent.get_config_info().get("react_loop", "langgraph")
-                status = "手动 ReAct" if mode == "manual" else "LangGraph"
+                status = labels.get(mode, mode)
                 console.print(
-                    f"[dim]当前循环: {status}。用法: /react on|off[/dim]"
+                    f"[dim]当前循环: {status}。用法: /react on|off 或 /strategy <名>[/dim]"
                 )
+            console.print(Rule(style="dim"))
+            continue
+        elif cmd.startswith("/strategy"):
+            name = user_input.strip()[9:].strip()
+            if not name:
+                cur = agent.get_config_info().get("react_loop", "langgraph")
+                console.print(
+                    f"[dim]当前策略: {cur}。用法: /strategy langgraph|manual|plan_execute[/dim]"
+                )
+            else:
+                try:
+                    agent.set_strategy(name)
+                    console.print(f"[dim]已切换到策略: {name}[/dim]")
+                except ValueError as e:
+                    console.print(f"[bold red]{e}[/bold red]")
             console.print(Rule(style="dim"))
             continue
         elif cmd.startswith("/approve"):
