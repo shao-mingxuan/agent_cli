@@ -95,3 +95,18 @@ class TestLoadSkillRegistry:
         keys_to_clean = [k for k in sys.modules if k.startswith("user_skill_")]
         for k in keys_to_clean:
             del sys.modules[k]
+
+
+class TestExternalSkillsAllowlist:
+    def test_allowlist_names_exist_in_default_registry(self):
+        from agent_cli.skills.loader import load_skill_modules
+        from agent_cli.tools.registry import create_default_registry
+
+        available = {info.name for info in create_default_registry().get_all_info()}
+        skills = load_skill_modules("./skills")
+        assert len(skills) == 3
+        for skill in skills:
+            for name in skill.tool_allowlist or []:
+                assert name in available, (
+                    f"{skill.name} 白名单引用了不存在的工具: {name}"
+                )

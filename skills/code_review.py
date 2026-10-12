@@ -34,7 +34,7 @@ code_review_skill = Skill(
 - 问题要具体到代码行或函数
 - 给出可操作的修改方案，不要泛泛而谈
 """,
-    tool_allowlist=["file_read", "shell"],
+    tool_allowlist=["read_file", "run_command"],
     preprocess=_preprocess,
     postprocess=_postprocess,
 )

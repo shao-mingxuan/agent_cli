@@ -37,6 +37,6 @@ tech_writer_skill = Skill(
 - 代码示例要可直接运行
 - 避免冗长描述，多用列表和表格
 """,
-    tool_allowlist=["file_read"],
+    tool_allowlist=["read_file"],
     preprocess=_preprocess,
 )
