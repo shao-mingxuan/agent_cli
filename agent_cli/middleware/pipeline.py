@@ -68,9 +68,32 @@ class MiddlewarePipeline:
 
 
 def create_default_pipeline() -> MiddlewarePipeline:
-    """创建带有默认中间件的管道。"""
+    """创建带有默认中间件的管道（仅含安全检测）。"""
     from .builtin.safety_guard import SafetyGuardMiddleware
 
     pipeline = MiddlewarePipeline()
     pipeline.add(SafetyGuardMiddleware())
+    return pipeline
+
+
+def create_full_pipeline() -> MiddlewarePipeline:
+    """创建完整中间件管道：安全 + 费用 + 限流 + 脱敏 + 日志 + 追踪。
+
+    相比默认管道增加了生产环境常用能力。限流默认 60 次/分钟，
+    可在启用前按需调整各中间件参数。
+    """
+    from .builtin.cost_guard import CostGuardMiddleware
+    from .builtin.logging import LoggingMiddleware
+    from .builtin.rate_limit import RateLimitMiddleware
+    from .builtin.redaction import RedactionMiddleware
+    from .builtin.safety_guard import SafetyGuardMiddleware
+    from .builtin.tracing import TracingMiddleware
+
+    pipeline = MiddlewarePipeline()
+    pipeline.add(SafetyGuardMiddleware())
+    pipeline.add(CostGuardMiddleware())
+    pipeline.add(RateLimitMiddleware())
+    pipeline.add(RedactionMiddleware())
+    pipeline.add(LoggingMiddleware())
+    pipeline.add(TracingMiddleware())
     return pipeline
