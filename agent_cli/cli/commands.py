@@ -1,8 +1,8 @@
 """L0 CLI - chat / run / config 子命令定义。"""
 
 import click
-from dotenv import load_dotenv
 
+from ..paths import load_env
 from .display import handle_events, print_config
 from .factory import create_orchestrator
 from .repl import run_repl
@@ -81,7 +81,7 @@ def chat(
     no_memory,
 ):
     """启动交互式对话。"""
-    load_dotenv()
+    load_env()
     agent = create_orchestrator(
         system_prompt,
         mcp_servers,
@@ -181,7 +181,7 @@ def run(
     no_memory,
 ):
     """单次执行一个问题。"""
-    load_dotenv()
+    load_env()
     agent = create_orchestrator(
         system_prompt,
         mcp_servers,
@@ -279,7 +279,7 @@ def config(
     no_memory,
 ):
     """查看当前 Agent 配置信息（不启动对话）。"""
-    load_dotenv()
+    load_env()
     agent = create_orchestrator(
         system_prompt,
         mcp_servers,

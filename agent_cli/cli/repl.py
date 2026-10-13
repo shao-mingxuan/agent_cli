@@ -5,6 +5,7 @@ from rich.rule import Rule
 from rich.text import Text
 
 from ..agent.orchestrator import Orchestrator
+from ..paths import skills_dir
 from ..providers.anthropic import AnthropicProvider
 from ..providers.deepseek import DeepSeekProvider
 from ..providers.glm import ZhipuProvider
@@ -132,7 +133,7 @@ def run_repl(agent: Orchestrator) -> None:
             console.print(Rule(style="dim"))
             continue
         elif cmd == "/skills":
-            skill_registry = load_skill_registry("./skills")
+            skill_registry = load_skill_registry(skills_dir())
             for s in skill_registry.list_skills():
                 active = (
                     " [bold green]●[/bold green]"
@@ -157,7 +158,7 @@ def run_repl(agent: Orchestrator) -> None:
             if not name:
                 console.print("[dim]用法: /skill <技能名>[/dim]")
                 continue
-            skill_registry = load_skill_registry("./skills")
+            skill_registry = load_skill_registry(skills_dir())
             skill = skill_registry.get(name)
             if skill is None:
                 console.print(f"[bold red]未知技能: {name}[/bold red]")

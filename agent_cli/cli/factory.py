@@ -1,11 +1,14 @@
 """L0 CLI - Orchestrator 工厂。"""
 
+from __future__ import annotations
+
 import json
 import os
 from typing import Any
 
 import click
 
+from .. import paths
 from ..agent.orchestrator import Orchestrator
 from ..mcp import MCPRegistry, load_mcp_servers_from_config, parse_mcp_server_spec
 from ..memory.working import WorkingMemory
@@ -23,9 +26,6 @@ from .approval import (
     sensitive_approval_callback,
 )
 from .utils import console
-
-# 未显式传入 --mcp-config 时，自动发现项目根目录下的默认 MCP 配置文件。
-DEFAULT_MCP_CONFIG = "./mcp.json"
 
 
 def create_provider(
@@ -46,9 +46,9 @@ def create_orchestrator(
     system_prompt: str | None = None,
     mcp_servers: tuple[str, ...] = (),
     mcp_config: str | None = None,
-    plugins_dir: str = "./plugins",
+    plugins_dir: str | None = None,
     skill_name: str | None = None,
-    skills_dir: str = "./skills",
+    skills_dir: str | None = None,
     approval: bool = False,
     auto_approve: bool = False,
     strategy: str | None = None,
@@ -64,6 +64,8 @@ def create_orchestrator(
     """创建 Orchestrator 实例，加载内置 + MCP + 插件工具。"""
     provider_obj = create_provider(provider, model_name)
     memory = WorkingMemory()
+    plugins_dir = plugins_dir or paths.plugins_dir()
+    skills_dir = skills_dir or paths.skills_dir()
 
     all_configs: list = []
     for spec in mcp_servers:
@@ -80,17 +82,17 @@ def create_orchestrator(
             console.print(
                 f"[bold red]MCP 配置文件加载失败 ({mcp_config}): {e}[/bold red]"
             )
-    elif os.path.exists(DEFAULT_MCP_CONFIG):
+    elif (auto_mcp := paths.mcp_config_path()) is not None:
         try:
-            auto_configs = load_mcp_servers_from_config(DEFAULT_MCP_CONFIG)
+            auto_configs = load_mcp_servers_from_config(auto_mcp)
             all_configs.extend(auto_configs)
             console.print(
-                f"[dim]已自动加载 MCP 配置: {DEFAULT_MCP_CONFIG} "
+                f"[dim]已自动加载 MCP 配置: {auto_mcp} "
                 f"({len(auto_configs)} 个 server)[/dim]"
             )
         except (FileNotFoundError, ValueError, json.JSONDecodeError) as e:
             console.print(
-                f"[bold red]MCP 配置文件加载失败 ({DEFAULT_MCP_CONFIG}): {e}[/bold red]"
+                f"[bold red]MCP 配置文件加载失败 ({auto_mcp}): {e}[/bold red]"
             )
 
     mcp_registry = None

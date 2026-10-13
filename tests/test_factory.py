@@ -36,6 +36,11 @@ class TestMcpAutoLoad:
         log: list = []
         _patch(monkeypatch, log)
         monkeypatch.setattr(
+            factory_mod.paths,
+            "mcp_config_path",
+            lambda: str(tmp_path / "mcp.json"),
+        )
+        monkeypatch.setattr(
             factory_mod,
             "load_mcp_servers_from_config",
             lambda p: [SimpleNamespace(name="auto")],
@@ -47,7 +52,7 @@ class TestMcpAutoLoad:
 
     def test_explicit_config_skips_auto(self, monkeypatch, tmp_path):
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "mcp.json").write_text('{"mcpServers":{}}')
+        monkeypatch.setattr(factory_mod.paths, "mcp_config_path", lambda: str(tmp_path / "mcp.json"))
         log: list = []
         calls: list = []
         _patch(monkeypatch, log)
@@ -65,6 +70,7 @@ class TestMcpAutoLoad:
         monkeypatch.chdir(tmp_path)
         log: list = []
         _patch(monkeypatch, log)
+        monkeypatch.setattr(factory_mod.paths, "mcp_config_path", lambda: None)
         monkeypatch.setattr(factory_mod, "load_mcp_servers_from_config", lambda p: [])
         create_orchestrator()
         assert log == []
@@ -75,6 +81,11 @@ class TestMcpAutoLoad:
         (tmp_path / "mcp.json").write_text("{not-json")
         log: list = []
         _patch(monkeypatch, log)
+        monkeypatch.setattr(
+            factory_mod.paths,
+            "mcp_config_path",
+            lambda: str(tmp_path / "mcp.json"),
+        )
         create_orchestrator()
         assert log == []
         assert _FakeOrchestrator.instances[0]["mcp_registry"] is None
